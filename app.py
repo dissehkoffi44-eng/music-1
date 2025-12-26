@@ -10,7 +10,6 @@ import gc
 from scipy.signal import butter, lfilter
 
 # --- CONFIGURATION & CONSTANTES ---
-# Remplacez par vos secrets ou laissez par défaut
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "7751365982:AAFLbeRoPsDx5OyIOlsgHcGKpI12hopzCYo")
 CHAT_ID = st.secrets.get("CHAT_ID", "-1003602454394")
 
@@ -68,7 +67,7 @@ def get_full_analysis(file_bytes, file_name):
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     
-    # Séparation Harmonique/Percussive (HPSS) pour isoler les notes des basses/batterie
+    # Séparation Harmonique/Percussive (HPSS)
     y_harm, _ = librosa.effects.hpss(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
@@ -95,7 +94,7 @@ def get_full_analysis(file_bytes, file_name):
     musical_bonus = 0
     warnings = []
 
-    # Détection Modulation (Changement de tonalité)
+    # Détection Modulation
     if n1 != key_final and score_final > 0.75:
         warnings.append(f"⚠️ MODULATION : Transition détectée de {n1} vers {key_final} en fin de piste.")
         final_decision = key_final
@@ -154,7 +153,8 @@ st.subheader("Analyseur Harmonique Haute Précision (V-I, Sensible, HPSS)")
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
-    for f in files:
+    # Utilisation de reversed(files) pour que les derniers fichiers montent en haut
+    for f in reversed(files):
         res = get_full_analysis(f.read(), f.name)
         
         # Boîte de résultat principale
@@ -186,7 +186,7 @@ if files:
             # Graphique de stabilité
             df_tl = pd.DataFrame(res['timeline'])
             fig = px.scatter(df_tl, x="Temps", y="Note", color="Confiance", size="Confiance", 
-                             title="Stabilité Harmonique & Modulations", 
+                             title=f"Stabilité Harmonique : {res['file_name']}", 
                              color_continuous_scale="Viridis", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
