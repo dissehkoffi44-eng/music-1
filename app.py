@@ -18,13 +18,18 @@ BASE_CAMELOT_MINOR = {'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A
 BASE_CAMELOT_MAJOR = {'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B','Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B','D':'10B','A':'11B','E':'12B'}
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-# Profils académiques de Krumhansl-Kessler
 PROFILES = {
     "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
     "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 }
 
-# --- FONCTIONS LOGIQUES MUSICALES ---
+# --- FONCTIONS TECHNIQUES & FILTRAGE ---
+
+def butter_lowpass_filter(data, cutoff, sr, order=5):
+    nyq = 0.5 * sr
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    return lfilter(b, a, data)
 
 def get_camelot_pro(key_mode_str):
     try:
@@ -34,12 +39,10 @@ def get_camelot_pro(key_mode_str):
     except: return "??"
 
 def check_leading_tone(chroma_avg, key_index):
-    """Vérifie la présence de la sensible pour le mode mineur."""
     leading_tone_idx = (key_index - 1) % 12
     return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
 
 def detect_perfect_cadence(n1, n2):
-    """Détecte une relation Dominante -> Tonique (V-I)."""
     try:
         r1, r2 = n1.split()[0], n2.split()[0]
         i1, i2 = NOTES_LIST.index(r1), NOTES_LIST.index(r2)
@@ -65,15 +68,21 @@ def analyze_segment(y, sr, tuning=0.0):
 
 @st.cache_data(show_spinner="Analyse Harmonique Profonde...", max_entries=10)
 def get_full_analysis(file_bytes, file_name):
-    # 1. Chargement et Nettoyage (Trim des silences)
+    # 1. Chargement, Nettoyage & Tuning
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
     y, _ = librosa.effects.trim(y) 
-    
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     y_harm, _ = librosa.effects.hpss(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
-    # 2. ANALYSE PAR SEGMENTS (VOTES) SUR TOUT LE MORCEAU
+    # 2. Analyse des Basses (Tonique fondamentale)
+    # On isole les fréquences de la basse pour confirmer la clé
+    y_low = butter_lowpass_filter(y, cutoff=150, sr=sr)
+    chroma_low = librosa.feature.chroma_cqt(y=y_low, sr=sr, tuning=tuning_offset)
+    bass_tonique_idx = np.argmax(np.mean(chroma_low, axis=1))
+    bass_note = NOTES_LIST[bass_tonique_idx]
+
+    # 3. Analyse par segments (Timeline)
     timeline_data, votes = [], []
     step = 8
     for start_t in range(0, int(duration) - step, step):
@@ -81,62 +90,63 @@ def get_full_analysis(file_bytes, file_name):
         key_seg, score_seg, _ = analyze_segment(y_seg, sr, tuning=tuning_offset)
         if key_seg:
             votes.append(key_seg)
-            timeline_data.append({"Temps": start_t, "Note": key_seg, "Confiance": round(float(score_seg) * 100, 1)})
+            timeline_data.append({
+                "Temps": start_t, 
+                "Note": key_seg, 
+                "Confiance": round(float(score_seg) * 100, 1)
+            })
 
-    # 3. ANALYSE DE LA ZONE STABLE (70% - 80% du morceau)
-    # On évite le fade out final et on cible le dernier refrain
+    # 4. Analyse de la zone stable (70-80% - dernier refrain)
     start_stable = int(duration * 0.7 * sr)
     end_stable = int(duration * 0.8 * sr)
     y_stable = y_harm[start_stable:end_stable]
     key_stable, score_stable, chroma_stable = analyze_segment(y_stable, sr, tuning=tuning_offset)
 
-    # 4. ARBITRAGE ET DIAGNOSTIC
+    # 5. Arbitrage Musical
     counts = Counter(votes)
     votes_sorted = counts.most_common(2)
     n1 = votes_sorted[0][0] if len(votes_sorted) > 0 else "C major"
     n2 = votes_sorted[1][0] if len(votes_sorted) > 1 else n1
     
-    # Logique de décision robuste
     warnings = []
-    final_decision = n1 # Par défaut, la majorité globale
+    final_decision = n1
     musical_bonus = 0
 
-    # Validation par la zone stable
-    if key_stable == n1:
-        musical_bonus += 15 # La zone stable confirme la majorité
-    elif key_stable == n2:
-        final_decision = n2 # On bascule sur la deuxième note si la zone stable la préfère
-        musical_bonus += 10
-        warnings.append(f"📍 Zone stable (70%) déviante : Bascule sur {n2}")
-    elif score_stable > 0.85:
-        # Si la fin est ultra claire mais différente de n1/n2 (Modulation)
-        final_decision = key_stable
-        musical_bonus += 20
-        warnings.append(f"⚠️ MODULATION : Transition vers {key_stable} détectée en fin de morceau.")
+    # Détection Polytonalité
+    if len(counts) > 5 and (counts[n1]/len(votes)) < 0.4:
+        warnings.append("🔄 POLYTONALITÉ : Structure harmonique changeante détectée.")
 
-    # Vérification du Mode Mineur (Sensible)
+    # Validation par la BASSE (Indicateur clé)
+    if bass_note in final_decision:
+        musical_bonus += 20
+    elif bass_note in n2:
+        final_decision = n2
+        musical_bonus += 15
+        warnings.append(f"🎸 PRIORITÉ BASSE : Basculement vers {n2} (Tonique basse dominante).")
+
+    # Validation par la Zone Stable
+    if key_stable == final_decision:
+        musical_bonus += 10
+    elif score_stable > 0.85:
+        warnings.append(f"⚠️ MODULATION : Transition vers {key_stable} détectée en fin de piste.")
+
+    # Vérification Mode Mineur (Sensible)
     root_idx = NOTES_LIST.index(final_decision.split()[0])
     if "minor" in final_decision:
         if check_leading_tone(chroma_stable, root_idx):
-            musical_bonus += 15
+            musical_bonus += 10
         else:
             warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
 
-    # Diagnostic de qualité
-    avg_conf = np.mean([d['Confiance'] for d in timeline_data])
-    if avg_conf < 50:
-        warnings.append("🎸 DISTORSION : Signal bruyant ou complexe.")
-
-    # Cadence V-I (Sur les deux notes dominantes globales)
+    # Cadence V-I
     is_cadence, confirmed_root = detect_perfect_cadence(n1, n2)
     if is_cadence:
-        final_decision = confirmed_root
-        musical_bonus += 15
+        if confirmed_root == final_decision:
+            musical_bonus += 15
 
-    # Calcul confiance finale
     total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
 
-    # Couleurs et Labels
+    # UI Design & Tempo
     if total_conf > 85: label, bg = "NOTE INDISCUTABLE", "linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"
     elif total_conf > 65: label, bg = "NOTE TRÈS FIABLE", "linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)"
     else: label, bg = "ANALYSE COMPLEXE", "linear-gradient(135deg, #f83600 0%, #f9d423 100%)"
@@ -163,13 +173,12 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("Analyseur Harmonique (Trim, Zone Stable & Arbitrage V-I)")
+st.subheader("V3 Haute Précision : Basses, Tuning & Zone Stable")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
     for f in reversed(files):
-        # On lit les bytes une seule fois
         file_bytes = f.read()
         res = get_full_analysis(file_bytes, f.name)
         
