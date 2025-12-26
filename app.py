@@ -6,7 +6,7 @@ import plotly.express as px
 from collections import Counter
 import io
 import requests  
-import gc                                      
+import gc                                     
 from scipy.signal import butter, lfilter
 
 # --- CONFIGURATION & CONSTANTES ---
@@ -38,6 +38,26 @@ def get_camelot_pro(key_mode_str):
         return BASE_CAMELOT_MINOR.get(key, "??") if mode == 'minor' else BASE_CAMELOT_MAJOR.get(key, "??")
     except: return "??"
 
+def identify_chord_triad(chroma_vector):
+    """
+    LOGIQUE DE TRIADES : Vérifie la présence de l'accord complet 
+    (Fondamentale, Tierce, Quinte) pour confirmer le mode.
+    """
+    best_score = -1
+    detected_mode = "unknown"
+    for i in range(12):
+        # Masque Majeur : Fondamentale, +4 demi-tons, +7 demi-tons
+        maj_mask = np.zeros(12); maj_mask[[i, (i+4)%12, (i+7)%12]] = 1
+        # Masque Mineur : Fondamentale, +3 demi-tons, +7 demi-tons
+        min_mask = np.zeros(12); min_mask[[i, (i+3)%12, (i+7)%12]] = 1
+        
+        s_maj = np.dot(chroma_vector, maj_mask)
+        s_min = np.dot(chroma_vector, min_mask)
+        
+        if s_maj > best_score: best_score, detected_mode = s_maj, "major"
+        if s_min > best_score: best_score, detected_mode = s_min, "minor"
+    return detected_mode
+
 def check_leading_tone(chroma_avg, key_index):
     leading_tone_idx = (key_index - 1) % 12
     return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
@@ -55,7 +75,8 @@ def detect_perfect_cadence(n1, n2):
 
 def analyze_segment(y, sr, tuning=0.0):
     if len(y) < 512: return None, 0.0, None
-    chroma = librosa.feature.chroma_cens(y=y, sr=sr, tuning=tuning)
+    # CHROMA CQT : Résolution constante adaptée au clavier musical
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, tuning=tuning)
     chroma_avg = np.mean(chroma, axis=1)
     
     best_score, res_key = -1, ""
@@ -66,7 +87,7 @@ def analyze_segment(y, sr, tuning=0.0):
                 best_score, res_key = score, f"{NOTES_LIST[i]} {mode}"
     return res_key, best_score, chroma_avg
 
-@st.cache_data(show_spinner="Analyse Harmonique Profonde...", max_entries=10)
+@st.cache_data(show_spinner="Analyse Harmonique Profonde V4...", max_entries=10)
 def get_full_analysis(file_bytes, file_name):
     # 1. Chargement, Nettoyage & Tuning
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
@@ -75,21 +96,21 @@ def get_full_analysis(file_bytes, file_name):
     y_harm, _ = librosa.effects.hpss(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
-    # 2. Analyse des Basses (Tonique fondamentale)
-    # On isole les fréquences de la basse pour confirmer la clé
+    # 2. FILTRAGE DES BASSES PRÉCIS (Confirmation Tonique)
     y_low = butter_lowpass_filter(y, cutoff=150, sr=sr)
     chroma_low = librosa.feature.chroma_cqt(y=y_low, sr=sr, tuning=tuning_offset)
     bass_tonique_idx = np.argmax(np.mean(chroma_low, axis=1))
     bass_note = NOTES_LIST[bass_tonique_idx]
 
-    # 3. Analyse par segments (Timeline)
-    timeline_data, votes = [], []
+    # 3. Analyse par segments (Timeline & Triades)
+    timeline_data, votes, chord_modes = [], [], []
     step = 8
     for start_t in range(0, int(duration) - step, step):
         y_seg = y_harm[int(start_t*sr):int((start_t+step)*sr)]
-        key_seg, score_seg, _ = analyze_segment(y_seg, sr, tuning=tuning_offset)
+        key_seg, score_seg, chroma_vec = analyze_segment(y_seg, sr, tuning=tuning_offset)
         if key_seg:
             votes.append(key_seg)
+            chord_modes.append(identify_chord_triad(chroma_vec))
             timeline_data.append({
                 "Temps": start_t, 
                 "Note": key_seg, 
@@ -102,33 +123,36 @@ def get_full_analysis(file_bytes, file_name):
     y_stable = y_harm[start_stable:end_stable]
     key_stable, score_stable, chroma_stable = analyze_segment(y_stable, sr, tuning=tuning_offset)
 
-    # 5. Arbitrage Musical
+    # 5. Arbitrage Musical & BONUS MUSICAL
     counts = Counter(votes)
     votes_sorted = counts.most_common(2)
     n1 = votes_sorted[0][0] if len(votes_sorted) > 0 else "C major"
     n2 = votes_sorted[1][0] if len(votes_sorted) > 1 else n1
     
+    # Détection du mode dominant par triades
+    triad_mode_dominant = Counter(chord_modes).most_common(1)[0][0]
+    
     warnings = []
     final_decision = n1
     musical_bonus = 0
 
-    # Détection Polytonalité
-    if len(counts) > 5 and (counts[n1]/len(votes)) < 0.4:
-        warnings.append("🔄 POLYTONALITÉ : Structure harmonique changeante détectée.")
-
     # Validation par la BASSE (Indicateur clé)
-    if bass_note in final_decision:
+    if bass_note == final_decision.split()[0]:
         musical_bonus += 20
-    elif bass_note in n2:
+    elif bass_note == n2.split()[0]:
         final_decision = n2
         musical_bonus += 15
         warnings.append(f"🎸 PRIORITÉ BASSE : Basculement vers {n2} (Tonique basse dominante).")
 
+    # Validation par Triades (Majeur vs Mineur)
+    if triad_mode_dominant in final_decision:
+        musical_bonus += 15
+    else:
+        warnings.append(f"⚠️ AMBIGUÏTÉ : Profil suggère {final_decision.split()[1]} mais texture triade {triad_mode_dominant}.")
+
     # Validation par la Zone Stable
     if key_stable == final_decision:
         musical_bonus += 10
-    elif score_stable > 0.85:
-        warnings.append(f"⚠️ MODULATION : Transition vers {key_stable} détectée en fin de piste.")
 
     # Vérification Mode Mineur (Sensible)
     root_idx = NOTES_LIST.index(final_decision.split()[0])
@@ -136,13 +160,12 @@ def get_full_analysis(file_bytes, file_name):
         if check_leading_tone(chroma_stable, root_idx):
             musical_bonus += 10
         else:
-            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
+            warnings.append("❓ SANS SENSIBLE : Mode mineur mélodiquement ambigu.")
 
     # Cadence V-I
     is_cadence, confirmed_root = detect_perfect_cadence(n1, n2)
-    if is_cadence:
-        if confirmed_root == final_decision:
-            musical_bonus += 15
+    if is_cadence and confirmed_root == final_decision:
+        musical_bonus += 15
 
     total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
 
@@ -159,7 +182,8 @@ def get_full_analysis(file_bytes, file_name):
         "tempo": int(float(tempo)),
         "timeline": timeline_data,
         "warnings": warnings,
-        "is_cadence": is_cadence
+        "is_cadence": is_cadence,
+        "details": {"bass": bass_note, "triad": triad_mode_dominant}
     }
 
 # --- INTERFACE STREAMLIT ---
@@ -172,8 +196,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("V3 Haute Précision : Basses, Tuning & Zone Stable")
+st.title("🎧 RCDJ228 ULTIME KEY PRO - V4")
+st.subheader("Basses CQT, Triades & Bonus Musical")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
@@ -182,7 +206,6 @@ if files:
         file_bytes = f.read()
         res = get_full_analysis(file_bytes, f.name)
         
-        # Boîte de résultat principale
         st.markdown(f"""
             <div style="background:{res['recommended']['bg']}; padding:35px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 20px rgba(0,0,0,0.1);">
                 <h2 style="margin:0; opacity:0.9;">{res['file_name']}</h2>
@@ -192,24 +215,25 @@ if files:
             </div>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns([1, 2])
-        
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Tempo Estimé", f"{res['tempo']} BPM")
-            if res['is_cadence']:
-                st.success("🎹 Cadence V-I Détectée")
-            
-            if res['warnings']:
-                st.warning("🔍 Diagnostic Technique")
-                for w in res['warnings']:
-                    st.write(f"- {w}")
-            else:
-                st.info("✅ Structure harmonique stable.")
-
         with col2:
+            st.metric("Tonique Basse", res['details']['bass'])
+        with col3:
+            st.metric("Mode Triade", res['details']['triad'].capitalize())
+            
+        if res['is_cadence']:
+            st.success("🎹 Cadence V-I Détectée")
+            
+        if res['warnings']:
+            st.warning("🔍 Diagnostic Technique")
+            for w in res['warnings']:
+                st.write(f"- {w}")
+
+        with st.expander("Analyse de Stabilité Graphique"):
             df_tl = pd.DataFrame(res['timeline'])
             fig = px.scatter(df_tl, x="Temps", y="Note", color="Confiance", size="Confiance", 
-                             title=f"Stabilité Harmonique : {res['file_name']}", 
                              color_continuous_scale="Viridis", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
