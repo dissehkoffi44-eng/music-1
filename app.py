@@ -6,13 +6,14 @@ import plotly.express as px
 from collections import Counter
 import io
 import requests  
-import gc                                     
+import gc                                      
 from scipy.signal import butter, lfilter
 
 # --- CONFIGURATION & CONSTANTES ---
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "7751365982:AAFLbeRoPsDx5OyIOlsgHcGKpI12hopzCYo")
 CHAT_ID = st.secrets.get("CHAT_ID", "-1003602454394")
 
+# Ton rappel : F# MINOR = 11A
 BASE_CAMELOT_MINOR = {'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A','F':'4A','C':'5A','G':'6A','D':'7A','A':'8A','E':'9A','B':'10A','F#':'11A','Gb':'11A','Db':'12A','C#':'12A'}
 BASE_CAMELOT_MAJOR = {'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B','Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B','D':'10B','A':'11B','E':'12B'}
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -33,7 +34,7 @@ def get_camelot_pro(key_mode_str):
     except: return "??"
 
 def check_leading_tone(chroma_avg, key_index):
-    """Vérifie la présence de la sensible (7ème note augmentée) pour le mode mineur."""
+    """Vérifie la présence de la sensible pour le mode mineur."""
     leading_tone_idx = (key_index - 1) % 12
     return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
 
@@ -64,14 +65,15 @@ def analyze_segment(y, sr, tuning=0.0):
 
 @st.cache_data(show_spinner="Analyse Harmonique Profonde...", max_entries=10)
 def get_full_analysis(file_bytes, file_name):
+    # 1. Chargement et Nettoyage (Trim des silences)
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
-    tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
+    y, _ = librosa.effects.trim(y) 
     
-    # Séparation Harmonique/Percussive (HPSS)
+    tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     y_harm, _ = librosa.effects.hpss(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
-    # 1. ANALYSE PAR SEGMENTS (VOTES)
+    # 2. ANALYSE PAR SEGMENTS (VOTES) SUR TOUT LE MORCEAU
     timeline_data, votes = [], []
     step = 8
     for start_t in range(0, int(duration) - step, step):
@@ -81,44 +83,57 @@ def get_full_analysis(file_bytes, file_name):
             votes.append(key_seg)
             timeline_data.append({"Temps": start_t, "Note": key_seg, "Confiance": round(float(score_seg) * 100, 1)})
 
-    # 2. ANALYSE DE LA RÉSOLUTION FINALE
-    y_final = y_harm[-int(5*sr):] 
-    key_final, score_final, chroma_final = analyze_segment(y_final, sr, tuning=tuning_offset)
+    # 3. ANALYSE DE LA ZONE STABLE (70% - 80% du morceau)
+    # On évite le fade out final et on cible le dernier refrain
+    start_stable = int(duration * 0.7 * sr)
+    end_stable = int(duration * 0.8 * sr)
+    y_stable = y_harm[start_stable:end_stable]
+    key_stable, score_stable, chroma_stable = analyze_segment(y_stable, sr, tuning=tuning_offset)
 
-    # 3. ARBITRAGE ET DIAGNOSTIC
+    # 4. ARBITRAGE ET DIAGNOSTIC
     counts = Counter(votes)
-    n1 = counts.most_common(1)[0][0]
-    n2 = counts.most_common(2)[1][0] if len(counts) > 1 else n1
+    votes_sorted = counts.most_common(2)
+    n1 = votes_sorted[0][0] if len(votes_sorted) > 0 else "C major"
+    n2 = votes_sorted[1][0] if len(votes_sorted) > 1 else n1
     
-    final_decision = n1
-    musical_bonus = 0
+    # Logique de décision robuste
     warnings = []
+    final_decision = n1 # Par défaut, la majorité globale
+    musical_bonus = 0
 
-    # Détection Modulation
-    if n1 != key_final and score_final > 0.75:
-        warnings.append(f"⚠️ MODULATION : Transition détectée de {n1} vers {key_final} en fin de piste.")
-        final_decision = key_final
+    # Validation par la zone stable
+    if key_stable == n1:
+        musical_bonus += 15 # La zone stable confirme la majorité
+    elif key_stable == n2:
+        final_decision = n2 # On bascule sur la deuxième note si la zone stable la préfère
+        musical_bonus += 10
+        warnings.append(f"📍 Zone stable (70%) déviante : Bascule sur {n2}")
+    elif score_stable > 0.85:
+        # Si la fin est ultra claire mais différente de n1/n2 (Modulation)
+        final_decision = key_stable
         musical_bonus += 20
+        warnings.append(f"⚠️ MODULATION : Transition vers {key_stable} détectée en fin de morceau.")
 
     # Vérification du Mode Mineur (Sensible)
     root_idx = NOTES_LIST.index(final_decision.split()[0])
     if "minor" in final_decision:
-        if check_leading_tone(chroma_final, root_idx):
+        if check_leading_tone(chroma_stable, root_idx):
             musical_bonus += 15
         else:
-            warnings.append("❓ AMBIGUÏTÉ : Mode mineur détecté sans sensible marquée (possible relatif majeur).")
+            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
 
     # Diagnostic de qualité
     avg_conf = np.mean([d['Confiance'] for d in timeline_data])
     if avg_conf < 50:
-        warnings.append("🎸 DISTORSION : Le signal est bruyant, ce qui peut impacter la précision.")
+        warnings.append("🎸 DISTORSION : Signal bruyant ou complexe.")
 
-    # Cadence V-I
+    # Cadence V-I (Sur les deux notes dominantes globales)
     is_cadence, confirmed_root = detect_perfect_cadence(n1, n2)
     if is_cadence:
         final_decision = confirmed_root
-        musical_bonus += 20
+        musical_bonus += 15
 
+    # Calcul confiance finale
     total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
 
     # Couleurs et Labels
@@ -148,14 +163,15 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("Analyseur Harmonique Haute Précision (V-I, Sensible, HPSS)")
+st.subheader("Analyseur Harmonique (Trim, Zone Stable & Arbitrage V-I)")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
-    # Utilisation de reversed(files) pour que les derniers fichiers montent en haut
     for f in reversed(files):
-        res = get_full_analysis(f.read(), f.name)
+        # On lit les bytes une seule fois
+        file_bytes = f.read()
+        res = get_full_analysis(file_bytes, f.name)
         
         # Boîte de résultat principale
         st.markdown(f"""
@@ -167,7 +183,6 @@ if files:
             </div>
         """, unsafe_allow_html=True)
 
-        # Zone de Diagnostic
         col1, col2 = st.columns([1, 2])
         
         with col1:
@@ -180,10 +195,9 @@ if files:
                 for w in res['warnings']:
                     st.write(f"- {w}")
             else:
-                st.info("✅ Aucune anomalie structurelle détectée.")
+                st.info("✅ Structure harmonique stable.")
 
         with col2:
-            # Graphique de stabilité
             df_tl = pd.DataFrame(res['timeline'])
             fig = px.scatter(df_tl, x="Temps", y="Note", color="Confiance", size="Confiance", 
                              title=f"Stabilité Harmonique : {res['file_name']}", 
@@ -192,5 +206,4 @@ if files:
 
         st.divider()
 
-# Nettoyage mémoire
 gc.collect()
