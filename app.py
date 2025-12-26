@@ -6,7 +6,7 @@ import plotly.express as px
 from collections import Counter
 import io
 import requests  
-import gc                                     
+import gc                                      
 from scipy.signal import butter, lfilter
 
 # --- CONFIGURATION & CONSTANTES ---
@@ -18,76 +18,41 @@ BASE_CAMELOT_MINOR = {'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A
 BASE_CAMELOT_MAJOR = {'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B','Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B','D':'10B','A':'11B','E':'12B'}
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
+# Profils académiques de Krumhansl-Kessler
 PROFILES = {
     "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
     "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 }
 
-# --- FONCTIONS DE TRAITEMENT DE SIGNAL (FULL) ---
-
-def spectral_whitening(y, sr):
-    """
-    Supprime les pics de résonance artificiels causés par la compression MP3 (Lo-Fi).
-    Indispensable pour la précision sur les fichiers 64kbps/128kbps.
-    """
-    S = np.abs(librosa.stft(y))
-    # Calcul de la moyenne spectrale pour aplatir (whitening)
-    S_white = S / (np.mean(S, axis=0) + 1e-6)
-    return librosa.istft(S_white)
-
-def butter_lowpass_filter(data, cutoff, sr, order=5):
-    """Filtre passe-bas de Butterworth pour isoler la fréquence fondamentale de la basse."""
-    nyq = 0.5 * sr
-    normal_cutoff = cutoff / nyq
-    b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    return lfilter(b, a, data)
+# --- FONCTIONS LOGIQUES MUSICALES ---
 
 def get_camelot_pro(key_mode_str):
-    """Convertit la clé détectée en code Camelot (ex: 11A)."""
     try:
         parts = key_mode_str.split(" ")
         key, mode = parts[0], parts[1].lower()
-        if mode == 'minor':
-            return BASE_CAMELOT_MINOR.get(key, "??")
-        else:
-            return BASE_CAMELOT_MAJOR.get(key, "??")
-    except:
-        return "??"
+        return BASE_CAMELOT_MINOR.get(key, "??") if mode == 'minor' else BASE_CAMELOT_MAJOR.get(key, "??")
+    except: return "??"
 
-def identify_complex_chords(chroma_vector):
-    """
-    Analyse les structures d'accords : Triades simples, 7ème de dominante et 9ème.
-    Permet de mieux gérer le Jazz, la Soul et la Deep House.
-    """
-    best_score = -1
-    detected_mode = "unknown"
-    
-    for i in range(12):
-        # Masques binaires pour chaque type d'accord
-        maj_mask = np.zeros(12); maj_mask[[i, (i+4)%12, (i+7)%12]] = 1
-        min_mask = np.zeros(12); min_mask[[i, (i+3)%12, (i+7)%12]] = 1
-        sev_mask = np.zeros(12); sev_mask[[i, (i+4)%12, (i+7)%12, (i+10)%12]] = 0.9 # Jazz/7th
-        
-        s_maj = np.dot(chroma_vector, maj_mask)
-        s_min = np.dot(chroma_vector, min_mask)
-        s_sev = np.dot(chroma_vector, sev_mask)
-        
-        current_max = max(s_maj, s_min, s_sev)
-        if current_max > best_score:
-            best_score = current_max
-            if current_max == s_maj: detected_mode = "major"
-            elif current_max == s_min: detected_mode = "minor"
-            else: detected_mode = "jazz_7th"
-            
-    return detected_mode
+def check_leading_tone(chroma_avg, key_index):
+    """Vérifie la présence de la sensible pour le mode mineur."""
+    leading_tone_idx = (key_index - 1) % 12
+    return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
 
-# --- MOTEUR D'ANALYSE PRINCIPAL ---
+def detect_perfect_cadence(n1, n2):
+    """Détecte une relation Dominante -> Tonique (V-I)."""
+    try:
+        r1, r2 = n1.split()[0], n2.split()[0]
+        i1, i2 = NOTES_LIST.index(r1), NOTES_LIST.index(r2)
+        if (i1 + 7) % 12 == i2: return True, n2
+        if (i2 + 7) % 12 == i1: return True, n1
+        return False, n1
+    except: return False, n1
+
+# --- MOTEUR D'ANALYSE ---
 
 def analyze_segment(y, sr, tuning=0.0):
-    """Analyse un bloc de 6-8 secondes via Constant-Q Transform."""
     if len(y) < 512: return None, 0.0, None
-    # bins_per_octave=24 pour une résolution microtonale (mieux que le standard 12)
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, tuning=tuning, bins_per_octave=24)
+    chroma = librosa.feature.chroma_cens(y=y, sr=sr, tuning=tuning)
     chroma_avg = np.mean(chroma, axis=1)
     
     best_score, res_key = -1, ""
@@ -98,138 +63,147 @@ def analyze_segment(y, sr, tuning=0.0):
                 best_score, res_key = score, f"{NOTES_LIST[i]} {mode}"
     return res_key, best_score, chroma_avg
 
-@st.cache_data(show_spinner="Deep Analysis V5.1 en cours...", max_entries=10)
+@st.cache_data(show_spinner="Analyse Harmonique Profonde...", max_entries=10)
 def get_full_analysis(file_bytes, file_name):
-    # 1. Chargement et Pre-processing
-    y_raw, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
+    # 1. Chargement et Nettoyage (Trim des silences)
+    y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
+    y, _ = librosa.effects.trim(y) 
     
-    # Étape critique : Blanchiment spectral pour contrer la compression
-    y_clean = spectral_whitening(y_raw, sr)
-    y_clean, _ = librosa.effects.trim(y_clean)
+    tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
+    y_harm, _ = librosa.effects.hpss(y)
+    duration = librosa.get_duration(y=y, sr=sr)
     
-    # Estimation précise du désaccordage (Tuning)
-    tuning_offset = librosa.estimate_tuning(y=y_clean, sr=sr)
-    
-    # Séparation Harmonique (pour les notes) / Percussive (pour le tempo)
-    y_harm, y_perc = librosa.effects.hpss(y_clean, margin=(2.0, 5.0))
-    duration = librosa.get_duration(y=y_clean, sr=sr)
-    
-    # 2. Analyse de la Fondation (Basse)
-    y_low = butter_lowpass_filter(y_harm, cutoff=140, sr=sr)
-    chroma_low = librosa.feature.chroma_cqt(y=y_low, sr=sr, tuning=tuning_offset)
-    bass_note = NOTES_LIST[np.argmax(np.mean(chroma_low, axis=1))]
-
-    # 3. Analyse Temporelle et Harmonique
-    timeline_data, votes, complex_modes = [], [], []
-    step = 6 # Précision chirurgicale toutes les 6 secondes
-    
+    # 2. ANALYSE PAR SEGMENTS (VOTES) SUR TOUT LE MORCEAU
+    timeline_data, votes = [], []
+    step = 8
     for start_t in range(0, int(duration) - step, step):
-        start_sample = int(start_t * sr)
-        end_sample = int((start_t + step) * sr)
-        y_seg = y_harm[start_sample:end_sample]
-        
-        key_seg, score_seg, chroma_vec = analyze_segment(y_seg, sr, tuning=tuning_offset)
-        
+        y_seg = y_harm[int(start_t*sr):int((start_t+step)*sr)]
+        key_seg, score_seg, _ = analyze_segment(y_seg, sr, tuning=tuning_offset)
         if key_seg:
             votes.append(key_seg)
-            complex_modes.append(identify_complex_chords(chroma_vec))
-            timeline_data.append({
-                "Temps": start_t, 
-                "Note": key_seg, 
-                "Confiance": round(float(score_seg) * 100, 1)
-            })
+            timeline_data.append({"Temps": start_t, "Note": key_seg, "Confiance": round(float(score_seg) * 100, 1)})
 
-    # 4. Décision Finale et Bonus Musical (Logique Pro)
+    # 3. ANALYSE DE LA ZONE STABLE (70% - 80% du morceau)
+    # On évite le fade out final et on cible le dernier refrain
+    start_stable = int(duration * 0.7 * sr)
+    end_stable = int(duration * 0.8 * sr)
+    y_stable = y_harm[start_stable:end_stable]
+    key_stable, score_stable, chroma_stable = analyze_segment(y_stable, sr, tuning=tuning_offset)
+
+    # 4. ARBITRAGE ET DIAGNOSTIC
     counts = Counter(votes)
-    n1 = counts.most_common(1)[0][0] if votes else "C major"
-    jazz_presence = Counter(complex_modes).get("jazz_7th", 0) / len(complex_modes) if complex_modes else 0
+    votes_sorted = counts.most_common(2)
+    n1 = votes_sorted[0][0] if len(votes_sorted) > 0 else "C major"
+    n2 = votes_sorted[1][0] if len(votes_sorted) > 1 else n1
     
+    # Logique de décision robuste
     warnings = []
+    final_decision = n1 # Par défaut, la majorité globale
     musical_bonus = 0
-    
-    # Règle 1 : Cohérence avec la basse
-    if bass_note == n1.split()[0]:
-        musical_bonus += 20
-    
-    # Règle 2 : Complexité Harmonique
-    if jazz_presence > 0.25:
+
+    # Validation par la zone stable
+    if key_stable == n1:
+        musical_bonus += 15 # La zone stable confirme la majorité
+    elif key_stable == n2:
+        final_decision = n2 # On bascule sur la deuxième note si la zone stable la préfère
         musical_bonus += 10
-        warnings.append("🎷 STRUCTURE JAZZ/SOUL : Accords de 7ème détectés.")
+        warnings.append(f"📍 Zone stable (70%) déviante : Bascule sur {n2}")
+    elif score_stable > 0.85:
+        # Si la fin est ultra claire mais différente de n1/n2 (Modulation)
+        final_decision = key_stable
+        musical_bonus += 20
+        warnings.append(f"⚠️ MODULATION : Transition vers {key_stable} détectée en fin de morceau.")
 
-    # Règle 3 : Modulations
-    if len(counts.keys()) > 5:
-        warnings.append("🔄 MODULATION : Changements de tonalité multiples détectés.")
+    # Vérification du Mode Mineur (Sensible)
+    root_idx = NOTES_LIST.index(final_decision.split()[0])
+    if "minor" in final_decision:
+        if check_leading_tone(chroma_stable, root_idx):
+            musical_bonus += 15
+        else:
+            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
 
-    total_conf = min(int((counts[n1]/len(votes)*100) + musical_bonus), 100)
+    # Diagnostic de qualité
+    avg_conf = np.mean([d['Confiance'] for d in timeline_data])
+    if avg_conf < 50:
+        warnings.append("🎸 DISTORSION : Signal bruyant ou complexe.")
 
-    # UI Branding Logic
-    if total_conf > 85: 
-        label, bg = "NOTE INDISCUTABLE", "linear-gradient(135deg, #1D976C 0%, #93F9B9 100%)"
-    elif total_conf > 65: 
-        label, bg = "NOTE TRÈS FIABLE", "linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)"
-    else: 
-        label, bg = "ANALYSE COMPLEXE", "linear-gradient(135deg, #eb3349 0%, #f45c43 100%)"
+    # Cadence V-I (Sur les deux notes dominantes globales)
+    is_cadence, confirmed_root = detect_perfect_cadence(n1, n2)
+    if is_cadence:
+        final_decision = confirmed_root
+        musical_bonus += 15
 
-    # Calcul du Tempo sur le signal percussif
-    tempo, _ = librosa.beat.beat_track(y=y_perc, sr=sr)
+    # Calcul confiance finale
+    total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
+
+    # Couleurs et Labels
+    if total_conf > 85: label, bg = "NOTE INDISCUTABLE", "linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"
+    elif total_conf > 65: label, bg = "NOTE TRÈS FIABLE", "linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)"
+    else: label, bg = "ANALYSE COMPLEXE", "linear-gradient(135deg, #f83600 0%, #f9d423 100%)"
+
+    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     
     return {
         "file_name": file_name,
-        "recommended": {"note": n1, "conf": total_conf, "label": label, "bg": bg},
+        "recommended": {"note": final_decision, "conf": total_conf, "label": label, "bg": bg},
         "tempo": int(float(tempo)),
         "timeline": timeline_data,
         "warnings": warnings,
-        "details": {"bass": bass_note, "jazz": f"{int(jazz_presence*100)}%"}
+        "is_cadence": is_cadence
     }
 
-# --- INTERFACE STREAMLIT (FULL DESIGN) ---
-st.set_page_config(page_title="RCDJ228 ULTIME KEY V5.1", layout="wide")
+# --- INTERFACE STREAMLIT ---
+st.set_page_config(page_title="RCDJ228 ULTIME KEY PRO", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; color: white; }
-    .stMetric { background: #1a1c24; padding: 20px; border-radius: 15px; border: 1px solid #30363d; }
+    .main { background-color: #f5f7f9; }
+    .stMetric { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎧 RCDJ228 ULTIME KEY PRO - V5.1")
-st.subheader("Moteur de calcul non-simplifié : CQT, Whitening & Chord Extensions")
+st.title("🎧 RCDJ228 ULTIME KEY PRO")
+st.subheader("Analyseur Harmonique (Trim, Zone Stable & Arbitrage V-I)")
 
-files = st.file_uploader("📂 DEPOSEZ VOS TRACKS ICI", accept_multiple_files=True, type=['mp3', 'wav', 'flac', 'm4a'])
+files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
     for f in reversed(files):
+        # On lit les bytes une seule fois
         file_bytes = f.read()
         res = get_full_analysis(file_bytes, f.name)
         
-        # Banner Résultat PRO
+        # Boîte de résultat principale
         st.markdown(f"""
-            <div style="background:{res['recommended']['bg']}; padding:45px; border-radius:25px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-                <p style="margin:0; opacity:0.8; text-transform:uppercase; letter-spacing:2px;">{res['file_name']}</p>
-                <h1 style="font-size:6em; margin:15px 0; font-weight:900; line-height:1;">{res['recommended']['note'].upper()}</h1>
-                <h2 style="margin:0; font-weight:700;">CAMELOT: {get_camelot_pro(res['recommended']['note'])} • {res['recommended']['conf']}% FIABILITÉ</h2>
-                <p style="margin-top:15px; text-transform:uppercase; letter-spacing:4px; font-size:0.9em; font-weight:bold;">{res['recommended']['label']}</p>
+            <div style="background:{res['recommended']['bg']}; padding:35px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 20px rgba(0,0,0,0.1);">
+                <h2 style="margin:0; opacity:0.9;">{res['file_name']}</h2>
+                <h1 style="font-size:5.5em; margin:15px 0; font-weight:900;">{res['recommended']['note']}</h1>
+                <h2 style="margin:0; font-weight:700;">{get_camelot_pro(res['recommended']['note'])} • {res['recommended']['conf']}% PRÉCISION</h2>
+                <p style="margin-top:10px; text-transform:uppercase; letter-spacing:3px; font-size:0.9em;">{res['recommended']['label']}</p>
             </div>
         """, unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns([1, 2])
+        
         with col1:
-            st.metric("Tempo track", f"{res['tempo']} BPM")
+            st.metric("Tempo Estimé", f"{res['tempo']} BPM")
+            if res['is_cadence']:
+                st.success("🎹 Cadence V-I Détectée")
+            
+            if res['warnings']:
+                st.warning("🔍 Diagnostic Technique")
+                for w in res['warnings']:
+                    st.write(f"- {w}")
+            else:
+                st.info("✅ Structure harmonique stable.")
+
         with col2:
-            st.metric("Root Bass", res['details']['bass'])
-        with col3:
-            st.metric("Jazz/Soul Factor", res['details']['jazz'])
-
-        if res['warnings']:
-            for w in res['warnings']: st.warning(f"🔍 {w}")
-
-        with st.expander("📊 Voir la Stabilité Harmonique (Timeline)"):
             df_tl = pd.DataFrame(res['timeline'])
             fig = px.scatter(df_tl, x="Temps", y="Note", color="Confiance", size="Confiance", 
-                             template="plotly_dark", color_continuous_scale="Viridis")
+                             title=f"Stabilité Harmonique : {res['file_name']}", 
+                             color_continuous_scale="Viridis", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
-# Libération forcée de la mémoire
 gc.collect()
