@@ -8,200 +8,183 @@ import io
 import gc
 
 # --- CONFIGURATION & CONSTANTES ---
-TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "7751365982:AAFLbeRoPsDx5OyIOlsgHcGKpI12hopzCYo")
-CHAT_ID = st.secrets.get("CHAT_ID", "-1003602454394")
-
-# Mapping Camelot (Note : F# Minor est bien identifié comme 11A selon vos instructions)
-BASE_CAMELOT_MINOR = {'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A','F':'4A','C':'5A','G':'6A','D':'7A','A':'8A','E':'9A','B':'10A','F#':'11A','Gb':'11A','Db':'12A','C#':'12A'}
-BASE_CAMELOT_MAJOR = {'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B','Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B','D':'10B','A':'11B','E':'12B'}
+# Respect strict de l'instruction : F# MINOR = 11A
+BASE_CAMELOT_MINOR = {
+    'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A','F':'4A',
+    'C':'5A','G':'6A','D':'7A','A':'8A','E':'9A','B':'10A','F#':'11A','Gb':'11A',
+    'Db':'12A','C#':'12A'
+}
+BASE_CAMELOT_MAJOR = {
+    'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B',
+    'Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B',
+    'D':'10B','A':'11B','E':'12B'
+}
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-# Profils académiques de Krumhansl-Kessler
+# Profils de Krumhansl-Kessler pour la corrélation
 PROFILES = {
     "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
     "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 }
 
-# --- FONCTIONS LOGIQUES MUSICALES ---
+# --- FONCTIONS LOGIQUES ---
 
 def get_camelot_pro(key_mode_str):
+    """Convertit la note textuelle en code Camelot Wheel."""
     try:
         parts = key_mode_str.split(" ")
         key, mode = parts[0], parts[1].lower()
-        return BASE_CAMELOT_MINOR.get(key, "??") if mode == 'minor' else BASE_CAMELOT_MAJOR.get(key, "??")
-    except: return "??"
+        if mode == 'minor':
+            return BASE_CAMELOT_MINOR.get(key, "??")
+        return BASE_CAMELOT_MAJOR.get(key, "??")
+    except:
+        return "??"
 
-def check_leading_tone(chroma_avg, key_index):
-    leading_tone_idx = (key_index - 1) % 12
-    return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
-
-def calculate_repose_bonus(chroma_history, candidate_key):
-    """
-    Calcule si la tonique est la note sur laquelle le morceau se repose.
-    Analyse la dominance énergétique et la stabilité (faible variance).
-    """
-    try:
-        root_note = candidate_key.split()[0]
-        root_idx = NOTES_LIST.index(root_note)
-        
-        # Extraction de l'énergie de la tonique sur toute la durée
-        root_energies = [c[root_idx] for c in chroma_history]
-        
-        avg_energy = np.mean(root_energies)
-        stability = 1 / (np.std(root_energies) + 0.1) # Plus c'est stable, plus le score monte
-        
-        # Si la note est présente avec force et stabilité
-        if avg_energy > 0.5 and stability > 2.0:
-            return 25
-        return 0
-    except: return 0
-
-def detect_perfect_cadence(n1, n2):
-    """Détecte les relations de quinte (V->I et I->V)"""
-    try:
-        r1, r2 = n1.split()[0], n2.split()[0]
-        i1, i2 = NOTES_LIST.index(r1), NOTES_LIST.index(r2)
-        if (i1 + 7) % 12 == i2: return True, n2, "V-I (Parfaite)"
-        if (i2 + 7) % 12 == i1: return True, n1, "I-V (Demi-cadence)"
-        return False, n1, None
-    except: return False, n1, None
-
-# --- MOTEUR d'ANALYSE ---
+def get_bass_priority(y, sr):
+    """Analyse l'énergie des fréquences basses pour confirmer la tonique (root note)."""
+    # Utilisation d'une fenêtre n_fft large pour une meilleure résolution dans les graves
+    chroma_bass = librosa.feature.chroma_stft(y=y, sr=sr, n_fft=4096, hop_length=1024)
+    return np.mean(chroma_bass, axis=1)
 
 def analyze_segment(y, sr, tuning=0.0):
-    if len(y) < 512: return None, 0.0, None
+    """Analyse un segment audio et retourne la clé la plus probable avec un score."""
+    if len(y) < 512:
+        return None, 0.0, None
+    
+    # Extraction Chroma CENS (robuste aux variations d'amplitude)
     chroma = librosa.feature.chroma_cens(y=y, sr=sr, tuning=tuning)
     chroma_avg = np.mean(chroma, axis=1)
+    
+    # Analyse de la structure des basses
+    bass_boost = get_bass_priority(y, sr)
     
     best_score, res_key = -1, ""
     for mode, profile in PROFILES.items():
         for i in range(12):
-            score = np.corrcoef(chroma_avg, np.roll(profile, i))[0, 1]
+            # Corrélation statistique
+            corr = np.corrcoef(chroma_avg, np.roll(profile, i))[0, 1]
+            # Pondération par la présence en basse (favorise la vraie tonique)
+            score = corr + (0.2 * bass_boost[i])
+            
             if score > best_score:
                 best_score, res_key = score, f"{NOTES_LIST[i]} {mode}"
+                
     return res_key, best_score, chroma_avg
 
-@st.cache_data(show_spinner="Analyse Harmonique Profonde...", max_entries=10)
+@st.cache_data(show_spinner="Analyse de la tonique en cours...", max_entries=20)
 def get_full_analysis(file_bytes, file_name):
+    """Moteur d'analyse complet sur l'ensemble du fichier."""
+    # Chargement
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
-    y_harm, _ = librosa.effects.hpss(y)
+    
+    # Extraction de la composante harmonique uniquement (ignore percussions/bruit)
+    y_harm = librosa.effects.harmonic(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
-    timeline_data, votes, chroma_history = [], [], []
-    step = 8
+    timeline_data, votes = [], []
+    step = 6 # Fenêtres de 6 secondes pour capter les changements
+    
     for start_t in range(0, int(duration) - step, step):
         y_seg = y_harm[int(start_t*sr):int((start_t+step)*sr)]
-        key_seg, score_seg, chroma_avg = analyze_segment(y_seg, sr, tuning=tuning_offset)
+        key_seg, score_seg, _ = analyze_segment(y_seg, sr, tuning=tuning_offset)
         if key_seg:
             votes.append(key_seg)
-            chroma_history.append(chroma_avg)
-            timeline_data.append({"Temps": start_t, "Note": key_seg, "Confiance": round(float(score_seg) * 100, 1)})
+            timeline_data.append({
+                "Temps": start_t, 
+                "Note": key_seg, 
+                "Confiance": round(float(score_seg) * 100, 1)
+            })
 
-    y_final = y_harm[-int(min(5, duration)*sr):] 
-    key_final, score_final, chroma_final = analyze_segment(y_final, sr, tuning=tuning_offset)
-
+    # Décision finale basée sur le vote majoritaire (stabilité)
     counts = Counter(votes)
-    n1 = counts.most_common(1)[0][0]
-    n2 = counts.most_common(2)[1][0] if len(counts) > 1 else n1
+    if not counts:
+        return None
+        
+    final_decision = counts.most_common(1)[0][0]
     
-    final_decision = n1
-    musical_bonus = 0
-    warnings = []
-    cadence_info = None
+    # Validation par l'Outro (souvent la tonique finale)
+    y_outro = y_harm[-int(min(12, duration)*sr):]
+    key_outro, _, _ = analyze_segment(y_outro, sr, tuning=tuning_offset)
+    
+    # Calcul de confiance final
+    stability_ratio = (counts[final_decision] / len(votes))
+    total_conf = int(stability_ratio * 100)
+    
+    # Bonus de confiance si l'outro confirme la tendance générale
+    if key_outro == final_decision:
+        total_conf = min(total_conf + 15, 100)
 
-    # 1. Bonus de Repos (Tonique Gravitationnelle)
-    repose_bonus = calculate_repose_bonus(chroma_history, final_decision)
-    if repose_bonus > 0:
-        musical_bonus += repose_bonus
-        warnings.append(f"🏠 REPOS : {final_decision} est le centre de stabilité du morceau.")
-
-    # 2. Logique de modulation
-    if n1 != key_final and score_final > 0.75:
-        warnings.append(f"⚠️ MODULATION : Transition vers {key_final} en fin de piste.")
-        final_decision = key_final
-        musical_bonus += 20
-
-    # 3. Vérification de la sensible
-    root_idx = NOTES_LIST.index(final_decision.split()[0])
-    if "minor" in final_decision:
-        if check_leading_tone(chroma_final, root_idx):
-            musical_bonus += 15
-        else:
-            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible.")
-
-    # 4. Détection de Cadence
-    is_cadence, confirmed_root, c_type = detect_perfect_cadence(n1, n2)
-    if is_cadence:
-        final_decision = confirmed_root
-        musical_bonus += 20
-        cadence_info = c_type
-        warnings.append(f"🎼 HARMONIE : Structure {c_type} identifiée.")
-
-    total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
-
-    if total_conf > 85: label, bg = "NOTE INDISCUTABLE", "linear-gradient(135deg, #00b09b 0%, #96c93d 100%)"
-    elif total_conf > 65: label, bg = "NOTE TRÈS FIABLE", "linear-gradient(135deg, #2193b0 0%, #6dd5ed 100%)"
-    else: label, bg = "ANALYSE COMPLEXE", "linear-gradient(135deg, #f83600 0%, #f9d423 100%)"
+    # Définition du style visuel
+    if total_conf > 80: bg = "linear-gradient(135deg, #1D976C 0%, #93F9B9 100%)"
+    elif total_conf > 60: bg = "linear-gradient(135deg, #2193B0 0%, #6DD5ED 100%)"
+    else: bg = "linear-gradient(135deg, #FF512F 0%, #DD2476 100%)"
 
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     
     return {
         "file_name": file_name,
-        "recommended": {"note": final_decision, "conf": total_conf, "label": label, "bg": bg},
+        "recommended": {"note": final_decision, "conf": total_conf, "bg": bg},
         "tempo": int(float(tempo)),
         "timeline": timeline_data,
-        "warnings": warnings,
-        "is_cadence": is_cadence,
-        "cadence_type": cadence_info
+        "outro_match": (key_outro == final_decision)
     }
 
 # --- INTERFACE STREAMLIT ---
-st.set_page_config(page_title="RCDJ228 ULTIME KEY PRO", layout="wide")
+
+st.set_page_config(page_title="RCDJ228 KEY PRO", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .main { background-color: #0e1117; color: white; }
+    .stMetric { background: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #333; }
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("Analyseur Harmonique Haute Précision (Stabilité & Cadences)")
+st.write("Analyseur de précision focalisé sur la **stabilité de la tonique**.")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
     for f in reversed(files):
-        file_bytes = f.read()
-        res = get_full_analysis(file_bytes, f.name)
+        res = get_full_analysis(f.read(), f.name)
         
-        st.markdown(f"""
-            <div style="background:{res['recommended']['bg']}; padding:35px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 20px rgba(0,0,0,0.1);">
-                <h2 style="margin:0; opacity:0.9;">{res['file_name']}</h2>
-                <h1 style="font-size:5.5em; margin:15px 0; font-weight:900;">{res['recommended']['note']}</h1>
-                <h2 style="margin:0; font-weight:700;">{get_camelot_pro(res['recommended']['note'])} • {res['recommended']['conf']}% PRÉCISION</h2>
-                <p style="margin-top:10px; text-transform:uppercase; letter-spacing:3px; font-size:0.9em;">{res['recommended']['label']}</p>
-            </div>
-        """, unsafe_allow_html=True)
+        if res:
+            # Grand bandeau de résultat
+            st.markdown(f"""
+                <div style="background:{res['recommended']['bg']}; padding:45px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+                    <h2 style="margin:0; opacity:0.8; font-weight:300;">{res['file_name']}</h2>
+                    <h1 style="font-size:6em; margin:10px 0; font-weight:900; letter-spacing:-2px;">{res['recommended']['note']}</h1>
+                    <h2 style="margin:0; font-weight:700;">CAMELOT : {get_camelot_pro(res['recommended']['note'])} • {res['recommended']['conf']}% FIABILITÉ</h2>
+                </div>
+            """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.metric("Tempo Estimé", f"{res['tempo']} BPM")
-            if res['is_cadence']: 
-                st.success(f"🎹 {res['cadence_type']} Détectée")
-            if res['warnings']:
-                st.warning("🔍 Diagnostic Technique")
-                for w in res['warnings']: st.write(f"- {w}")
-            else: st.info("✅ Aucune anomalie détectée.")
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.metric("Tempo", f"{res['tempo']} BPM")
+                if res['outro_match']:
+                    st.success("✅ Tonique confirmée par la fin du morceau.")
+                else:
+                    st.warning("⚠️ La fin du morceau varie (Modulation possible).")
+                
+                if res['recommended']['conf'] < 50:
+                    st.info("💡 Conseil : Le morceau semble complexe ou riche en harmoniques.")
 
-        with col2:
-            df_tl = pd.DataFrame(res['timeline'])
-            fig = px.scatter(df_tl, x="Temps", y="Note", color="Confiance", size="Confiance", 
-                             title="Stabilité Harmonique", color_continuous_scale="Viridis", template="plotly_white")
-            st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                # Graphique de stabilité
+                df_tl = pd.DataFrame(res['timeline'])
+                fig = px.scatter(
+                    df_tl, x="Temps", y="Note", color="Confiance", 
+                    title="Analyse de la stabilité temporelle",
+                    color_continuous_scale="Viridis", height=300
+                )
+                fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
         
-        st.divider()
         gc.collect()
 
+# Nettoyage final
 gc.collect()
