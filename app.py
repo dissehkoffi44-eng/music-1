@@ -8,7 +8,6 @@ import io
 import gc
 
 # --- CONFIGURATION & CONSTANTES ---
-# Respect strict de l'instruction : F# MINOR = 11A
 BASE_CAMELOT_MINOR = {
     'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A','F':'4A',
     'C':'5A','G':'6A','D':'7A','A':'8A','E':'9A','B':'10A','F#':'11A','Gb':'11A',
@@ -19,9 +18,14 @@ BASE_CAMELOT_MAJOR = {
     'Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B',
     'D':'10B','A':'11B','E':'12B'
 }
+# Liste ordonnée pour l'affichage graphique
+NOTES_ORDER = ['C major', 'C minor', 'C# major', 'C# minor', 'D major', 'D minor', 
+               'D# major', 'D# minor', 'E major', 'E minor', 'F major', 'F minor', 
+               'F# major', 'F# minor', 'G major', 'G minor', 'G# major', 'G# minor', 
+               'A major', 'A minor', 'A# major', 'A# minor', 'B major', 'B minor']
+
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-# Profils de Krumhansl-Kessler pour la corrélation
 PROFILES = {
     "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
     "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
@@ -41,49 +45,34 @@ def get_camelot_pro(key_mode_str):
         return "??"
 
 def get_bass_priority(y, sr):
-    """Analyse l'énergie des fréquences basses pour confirmer la tonique (root note)."""
-    # Utilisation d'une fenêtre n_fft large pour une meilleure résolution dans les graves
     chroma_bass = librosa.feature.chroma_stft(y=y, sr=sr, n_fft=4096, hop_length=1024)
     return np.mean(chroma_bass, axis=1)
 
 def analyze_segment(y, sr, tuning=0.0):
-    """Analyse un segment audio et retourne la clé la plus probable avec un score."""
     if len(y) < 512:
         return None, 0.0, None
-    
-    # Extraction Chroma CENS (robuste aux variations d'amplitude)
     chroma = librosa.feature.chroma_cens(y=y, sr=sr, tuning=tuning)
     chroma_avg = np.mean(chroma, axis=1)
-    
-    # Analyse de la structure des basses
     bass_boost = get_bass_priority(y, sr)
     
     best_score, res_key = -1, ""
     for mode, profile in PROFILES.items():
         for i in range(12):
-            # Corrélation statistique
             corr = np.corrcoef(chroma_avg, np.roll(profile, i))[0, 1]
-            # Pondération par la présence en basse (favorise la vraie tonique)
             score = corr + (0.2 * bass_boost[i])
-            
             if score > best_score:
                 best_score, res_key = score, f"{NOTES_LIST[i]} {mode}"
-                
     return res_key, best_score, chroma_avg
 
-@st.cache_data(show_spinner="Analyse de la tonique en cours...", max_entries=20)
+@st.cache_data(show_spinner="Analyse harmonique en cours...", max_entries=20)
 def get_full_analysis(file_bytes, file_name):
-    """Moteur d'analyse complet sur l'ensemble du fichier."""
-    # Chargement
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
-    
-    # Extraction de la composante harmonique uniquement (ignore percussions/bruit)
     y_harm = librosa.effects.harmonic(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
     timeline_data, votes = [], []
-    step = 6 # Fenêtres de 6 secondes pour capter les changements
+    step = 6 
     
     for start_t in range(0, int(duration) - step, step):
         y_seg = y_harm[int(start_t*sr):int((start_t+step)*sr)]
@@ -93,29 +82,22 @@ def get_full_analysis(file_bytes, file_name):
             timeline_data.append({
                 "Temps": start_t, 
                 "Note": key_seg, 
+                "Camelot": get_camelot_pro(key_seg),
                 "Confiance": round(float(score_seg) * 100, 1)
             })
 
-    # Décision finale basée sur le vote majoritaire (stabilité)
     counts = Counter(votes)
-    if not counts:
-        return None
-        
+    if not counts: return None
     final_decision = counts.most_common(1)[0][0]
     
-    # Validation par l'Outro (souvent la tonique finale)
     y_outro = y_harm[-int(min(12, duration)*sr):]
     key_outro, _, _ = analyze_segment(y_outro, sr, tuning=tuning_offset)
     
-    # Calcul de confiance final
     stability_ratio = (counts[final_decision] / len(votes))
     total_conf = int(stability_ratio * 100)
-    
-    # Bonus de confiance si l'outro confirme la tendance générale
     if key_outro == final_decision:
         total_conf = min(total_conf + 15, 100)
 
-    # Définition du style visuel
     if total_conf > 80: bg = "linear-gradient(135deg, #1D976C 0%, #93F9B9 100%)"
     elif total_conf > 60: bg = "linear-gradient(135deg, #2193B0 0%, #6DD5ED 100%)"
     else: bg = "linear-gradient(135deg, #FF512F 0%, #DD2476 100%)"
@@ -142,16 +124,13 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.write("Analyseur de précision focalisé sur la **stabilité de la tonique**.")
-
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
     for f in reversed(files):
         res = get_full_analysis(f.read(), f.name)
-        
         if res:
-            # Grand bandeau de résultat
+            # Bandeau de résultat
             st.markdown(f"""
                 <div style="background:{res['recommended']['bg']}; padding:45px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
                     <h2 style="margin:0; opacity:0.8; font-weight:300;">{res['file_name']}</h2>
@@ -164,27 +143,50 @@ if files:
             with col1:
                 st.metric("Tempo", f"{res['tempo']} BPM")
                 if res['outro_match']:
-                    st.success("✅ Tonique confirmée par la fin du morceau.")
+                    st.success("✅ Tonique confirmée par l'outro.")
                 else:
-                    st.warning("⚠️ La fin du morceau varie (Modulation possible).")
+                    st.warning("⚠️ Variation détectée en fin de morceau.")
                 
-                if res['recommended']['conf'] < 50:
-                    st.info("💡 Conseil : Le morceau semble complexe ou riche en harmoniques.")
+                st.info(f"Analyse basée sur {len(res['timeline'])} segments harmoniques.")
 
             with col2:
-                # Graphique de stabilité
+                # --- GRAPHIQUE PLOTLY DÉTAILLÉ ---
                 df_tl = pd.DataFrame(res['timeline'])
-                fig = px.scatter(
-                    df_tl, x="Temps", y="Note", color="Confiance", 
+                
+                fig = px.line(
+                    df_tl, x="Temps", y="Note", 
                     title="Analyse de la stabilité temporelle",
-                    color_continuous_scale="Viridis", height=300
+                    markers=True,
+                    color_discrete_sequence=["#6DD5ED"],
+                    hover_data={"Temps": True, "Note": True, "Confiance": True, "Camelot": True}
                 )
-                fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=40, b=0))
+
+                fig.update_traces(
+                    marker=dict(
+                        size=10, color=df_tl['Confiance'], 
+                        colorscale='Viridis', showscale=True,
+                        colorbar=dict(title="Fiabilité %", thickness=15)
+                    ),
+                    line=dict(width=1, dash='dot')
+                )
+
+                fig.update_layout(
+                    template="plotly_dark", height=380,
+                    margin=dict(l=0, r=0, t=50, b=0),
+                    xaxis=dict(title="Temps (secondes)", showgrid=False),
+                    yaxis=dict(
+                        title=None, 
+                        categoryorder='array', 
+                        categoryarray=NOTES_ORDER,
+                        showgrid=True, gridcolor='#333'
+                    ),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                )
+                
                 st.plotly_chart(fig, use_container_width=True)
 
             st.divider()
-        
         gc.collect()
 
-# Nettoyage final
 gc.collect()
