@@ -6,7 +6,6 @@ import plotly.express as px
 from collections import Counter
 import io
 import gc
-from scipy.signal import butter, lfilter
 
 # --- CONFIGURATION & CONSTANTES ---
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "7751365982:AAFLbeRoPsDx5OyIOlsgHcGKpI12hopzCYo")
@@ -37,15 +36,23 @@ def check_leading_tone(chroma_avg, key_index):
     return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
 
 def detect_perfect_cadence(n1, n2):
+    """Détecte les relations de quinte dans les deux sens (V->I et I->V)"""
     try:
         r1, r2 = n1.split()[0], n2.split()[0]
         i1, i2 = NOTES_LIST.index(r1), NOTES_LIST.index(r2)
-        if (i1 + 7) % 12 == i2: return True, n2
-        if (i2 + 7) % 12 == i1: return True, n1
-        return False, n1
-    except: return False, n1
+        
+        # Cas 1 : n1 est la dominante (V), n2 est la tonique (I) -> Cadence Parfaite
+        if (i1 + 7) % 12 == i2: 
+            return True, n2, "V-I (Parfaite)"
+            
+        # Cas 2 : n1 est la tonique (I), n2 est la dominante (V) -> Demi-cadence
+        if (i2 + 7) % 12 == i1: 
+            return True, n1, "I-V (Demi-cadence)"
+            
+        return False, n1, None
+    except: return False, n1, None
 
-# --- MOTEUR D'ANALYSE ---
+# --- MOTEUR d'ANALYSE ---
 
 def analyze_segment(y, sr, tuning=0.0):
     if len(y) < 512: return None, 0.0, None
@@ -87,12 +94,15 @@ def get_full_analysis(file_bytes, file_name):
     final_decision = n1
     musical_bonus = 0
     warnings = []
+    cadence_info = None
 
+    # Logique de modulation
     if n1 != key_final and score_final > 0.75:
         warnings.append(f"⚠️ MODULATION : Transition de {n1} vers {key_final} en fin de piste.")
         final_decision = key_final
         musical_bonus += 20
 
+    # Vérification de la sensible (Leading Tone)
     root_idx = NOTES_LIST.index(final_decision.split()[0])
     if "minor" in final_decision:
         if check_leading_tone(chroma_final, root_idx):
@@ -100,14 +110,17 @@ def get_full_analysis(file_bytes, file_name):
         else:
             warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
 
-    avg_conf = np.mean([d['Confiance'] for d in timeline_data])
-    if avg_conf < 50:
-        warnings.append("🎸 DISTORSION : Signal bruyant détecté.")
-
-    is_cadence, confirmed_root = detect_perfect_cadence(n1, n2)
+    # Détection de Cadence (V-I et I-V)
+    is_cadence, confirmed_root, c_type = detect_perfect_cadence(n1, n2)
     if is_cadence:
         final_decision = confirmed_root
         musical_bonus += 20
+        cadence_info = c_type
+        warnings.append(f"🎼 HARMONIE : Structure {c_type} identifiée.")
+
+    avg_conf = np.mean([d['Confiance'] for d in timeline_data])
+    if avg_conf < 50:
+        warnings.append("🎸 DISTORSION : Signal bruyant détecté.")
 
     total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
 
@@ -123,7 +136,8 @@ def get_full_analysis(file_bytes, file_name):
         "tempo": int(float(tempo)),
         "timeline": timeline_data,
         "warnings": warnings,
-        "is_cadence": is_cadence
+        "is_cadence": is_cadence,
+        "cadence_type": cadence_info
     }
 
 # --- INTERFACE STREAMLIT ---
@@ -137,7 +151,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("Analyseur Harmonique Haute Précision")
+st.subheader("Analyseur Harmonique Haute Précision (V-I & I-V Support)")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
@@ -158,7 +172,8 @@ if files:
         col1, col2 = st.columns([1, 2])
         with col1:
             st.metric("Tempo Estimé", f"{res['tempo']} BPM")
-            if res['is_cadence']: st.success("🎹 Cadence V-I Détectée")
+            if res['is_cadence']: 
+                st.success(f"🎹 {res['cadence_type']} Détectée")
             if res['warnings']:
                 st.warning("🔍 Diagnostic Technique")
                 for w in res['warnings']: st.write(f"- {w}")
