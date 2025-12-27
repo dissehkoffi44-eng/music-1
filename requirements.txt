@@ -3,5 +3,6 @@ librosa
 numpy
 pandas
 plotly
-scipy
 requests
+scipy
+kaleido==0.2.1
