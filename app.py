@@ -11,7 +11,7 @@ import gc
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "7751365982:AAFLbeRoPsDx5OyIOlsgHcGKpI12hopzCYo")
 CHAT_ID = st.secrets.get("CHAT_ID", "-1003602454394")
 
-# Mapping Camelot (Note : F# Minor est bien identifié comme 11A)
+# Mapping Camelot (Note : F# Minor est bien identifié comme 11A selon vos instructions)
 BASE_CAMELOT_MINOR = {'Ab':'1A','G#':'1A','Eb':'2A','D#':'2A','Bb':'3A','A#':'3A','F':'4A','C':'5A','G':'6A','D':'7A','A':'8A','E':'9A','B':'10A','F#':'11A','Gb':'11A','Db':'12A','C#':'12A'}
 BASE_CAMELOT_MAJOR = {'B':'1B','F#':'2B','Gb':'2B','Db':'3B','C#':'3B','Ab':'4B','G#':'4B','Eb':'5B','D#':'5B','Bb':'6B','A#':'6B','F':'7B','C':'8B','G':'9B','D':'10B','A':'11B','E':'12B'}
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -35,20 +35,34 @@ def check_leading_tone(chroma_avg, key_index):
     leading_tone_idx = (key_index - 1) % 12
     return chroma_avg[leading_tone_idx] > np.mean(chroma_avg) * 1.2
 
+def calculate_repose_bonus(chroma_history, candidate_key):
+    """
+    Calcule si la tonique est la note sur laquelle le morceau se repose.
+    Analyse la dominance énergétique et la stabilité (faible variance).
+    """
+    try:
+        root_note = candidate_key.split()[0]
+        root_idx = NOTES_LIST.index(root_note)
+        
+        # Extraction de l'énergie de la tonique sur toute la durée
+        root_energies = [c[root_idx] for c in chroma_history]
+        
+        avg_energy = np.mean(root_energies)
+        stability = 1 / (np.std(root_energies) + 0.1) # Plus c'est stable, plus le score monte
+        
+        # Si la note est présente avec force et stabilité
+        if avg_energy > 0.5 and stability > 2.0:
+            return 25
+        return 0
+    except: return 0
+
 def detect_perfect_cadence(n1, n2):
-    """Détecte les relations de quinte dans les deux sens (V->I et I->V)"""
+    """Détecte les relations de quinte (V->I et I->V)"""
     try:
         r1, r2 = n1.split()[0], n2.split()[0]
         i1, i2 = NOTES_LIST.index(r1), NOTES_LIST.index(r2)
-        
-        # Cas 1 : n1 est la dominante (V), n2 est la tonique (I) -> Cadence Parfaite
-        if (i1 + 7) % 12 == i2: 
-            return True, n2, "V-I (Parfaite)"
-            
-        # Cas 2 : n1 est la tonique (I), n2 est la dominante (V) -> Demi-cadence
-        if (i2 + 7) % 12 == i1: 
-            return True, n1, "I-V (Demi-cadence)"
-            
+        if (i1 + 7) % 12 == i2: return True, n2, "V-I (Parfaite)"
+        if (i2 + 7) % 12 == i1: return True, n1, "I-V (Demi-cadence)"
         return False, n1, None
     except: return False, n1, None
 
@@ -71,17 +85,17 @@ def analyze_segment(y, sr, tuning=0.0):
 def get_full_analysis(file_bytes, file_name):
     y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050)
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
-    
     y_harm, _ = librosa.effects.hpss(y)
     duration = librosa.get_duration(y=y, sr=sr)
     
-    timeline_data, votes = [], []
+    timeline_data, votes, chroma_history = [], [], []
     step = 8
     for start_t in range(0, int(duration) - step, step):
         y_seg = y_harm[int(start_t*sr):int((start_t+step)*sr)]
-        key_seg, score_seg, _ = analyze_segment(y_seg, sr, tuning=tuning_offset)
+        key_seg, score_seg, chroma_avg = analyze_segment(y_seg, sr, tuning=tuning_offset)
         if key_seg:
             votes.append(key_seg)
+            chroma_history.append(chroma_avg)
             timeline_data.append({"Temps": start_t, "Note": key_seg, "Confiance": round(float(score_seg) * 100, 1)})
 
     y_final = y_harm[-int(min(5, duration)*sr):] 
@@ -96,31 +110,33 @@ def get_full_analysis(file_bytes, file_name):
     warnings = []
     cadence_info = None
 
-    # Logique de modulation
+    # 1. Bonus de Repos (Tonique Gravitationnelle)
+    repose_bonus = calculate_repose_bonus(chroma_history, final_decision)
+    if repose_bonus > 0:
+        musical_bonus += repose_bonus
+        warnings.append(f"🏠 REPOS : {final_decision} est le centre de stabilité du morceau.")
+
+    # 2. Logique de modulation
     if n1 != key_final and score_final > 0.75:
-        warnings.append(f"⚠️ MODULATION : Transition de {n1} vers {key_final} en fin de piste.")
+        warnings.append(f"⚠️ MODULATION : Transition vers {key_final} en fin de piste.")
         final_decision = key_final
         musical_bonus += 20
 
-    # Vérification de la sensible (Leading Tone)
+    # 3. Vérification de la sensible
     root_idx = NOTES_LIST.index(final_decision.split()[0])
     if "minor" in final_decision:
         if check_leading_tone(chroma_final, root_idx):
             musical_bonus += 15
         else:
-            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible (possible relatif majeur).")
+            warnings.append("❓ AMBIGUÏTÉ : Mode mineur sans sensible.")
 
-    # Détection de Cadence (V-I et I-V)
+    # 4. Détection de Cadence
     is_cadence, confirmed_root, c_type = detect_perfect_cadence(n1, n2)
     if is_cadence:
         final_decision = confirmed_root
         musical_bonus += 20
         cadence_info = c_type
         warnings.append(f"🎼 HARMONIE : Structure {c_type} identifiée.")
-
-    avg_conf = np.mean([d['Confiance'] for d in timeline_data])
-    if avg_conf < 50:
-        warnings.append("🎸 DISTORSION : Signal bruyant détecté.")
 
     total_conf = min(int((counts[final_decision]/len(votes)*100) + musical_bonus), 100)
 
@@ -151,17 +167,15 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🎧 RCDJ228 ULTIME KEY PRO")
-st.subheader("Analyseur Harmonique Haute Précision (V-I & I-V Support)")
+st.subheader("Analyseur Harmonique Haute Précision (Stabilité & Cadences)")
 
 files = st.file_uploader("📂 DEPOSEZ VOS FICHIERS AUDIO", accept_multiple_files=True, type=['mp3', 'wav', 'flac'])
 
 if files:
-    # --- CHANGEMENT ICI : On inverse la liste des fichiers pour afficher le plus récent en haut ---
     for f in reversed(files):
         file_bytes = f.read()
         res = get_full_analysis(file_bytes, f.name)
         
-        # Container principal de résultat
         st.markdown(f"""
             <div style="background:{res['recommended']['bg']}; padding:35px; border-radius:20px; color:white; text-align:center; margin:20px 0; box-shadow: 0 10px 20px rgba(0,0,0,0.1);">
                 <h2 style="margin:0; opacity:0.9;">{res['file_name']}</h2>
@@ -188,8 +202,6 @@ if files:
             st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
-        # Nettoyage mémoire après chaque fichier
         gc.collect()
 
-# Final clean up
 gc.collect()
