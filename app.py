@@ -92,24 +92,46 @@ def get_bass_priority(y, sr):
 def solve_key_sniper(chroma_vector, bass_vector, tuning):
     best_overall_score = -1
     best_key = "Unknown"
+    
+    # Normalisation des vecteurs
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
     
     for p_name, p_data in PROFILES.items():
         for mode in ["major", "minor"]:
             for i in range(12):
+                # Score de corrélation statistique de base
                 score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
-                if bv[i] > 0.6: score += (bv[i] * 0.2)
+                
+                # --- LOGIQUE DE CADENCE & HARMONIE ---
+                
+                # 1. Priorité Basse (Fondamentale)
+                if bv[i] > 0.6: score += (bv[i] * 0.25)
+                
+                # 2. Détection de la Dominante Majeure (V -> i)
+                # Si on teste une tonalité Mineure (ex: Mi minor)
+                if mode == "minor":
+                    fifth_deg = (i + 7) % 12  # La Quinte (ex: Si)
+                    leading_tone = (i + 11) % 12 # La Sensible (ex: Ré#)
+                    
+                    # Si la Quinte est forte ET que la Sensible est présente (Cadence Harmonique)
+                    if cv[fifth_deg] > 0.5 and cv[leading_tone] > 0.4:
+                        score += 0.3 # Bonus de détection Sniper
+                
+                # 3. Vérification Quinte Juste standard
                 if cv[(i + 7) % 12] > 0.5: score += 0.1
+                
+                # 4. Discrimination Tierce Majeure / Mineure
                 third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
-                if cv[third_idx] > 0.5: score += 0.1
+                if cv[third_idx] > 0.5: score += 0.15
+                
                 if score > best_overall_score:
                     best_overall_score = score
                     best_key = f"{NOTES_LIST[i]} {mode}"
+                    
     return {"key": best_key, "score": best_overall_score}
 
 def process_audio(audio_file, file_name, progress_placeholder):
-    # Barre de progression et texte
     status_text = progress_placeholder.empty()
     progress_bar = progress_placeholder.progress(0)
 
@@ -139,11 +161,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
         b_seg = get_bass_priority(y[idx_start:idx_end], sr)
         
         res = solve_key_sniper(c_avg, b_seg, tuning)
+        
+        # Poids Sniper : Début et fin de morceau sont cruciaux pour la tonalité
         weight = 2.0 if (start < 10 or start > (duration - 15)) else 1.0
         votes[res['key']] += int(res['score'] * 100 * weight)
         timeline.append({"Temps": start, "Note": res['key'], "Conf": res['score']})
         
-        # Progression dynamique entre 50 et 90
         p_val = 50 + int((i / len(segments)) * 40)
         update_prog(p_val, "Calcul chirurgical en cours")
 
@@ -173,8 +196,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
     del y, y_filt; gc.collect()
     return res_obj
 
-# --- UTILITAIRES INTERFACE ---
-
 def get_chord_js(btn_id, key_str):
     note, mode = key_str.split()
     return f"""
@@ -195,37 +216,28 @@ def get_chord_js(btn_id, key_str):
     """
 
 # --- DASHBOARD PRINCIPAL ---
-
 st.title("🎯 LE SNIPER")
-st.markdown("#### Système d'Analyse Harmonique | Nouveau fichier en tête de liste")
+st.markdown("#### Système d'Analyse Harmonique | Intégration Cadence V-i")
 
 uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
 
 if uploaded_files:
-    # Conteneur pour la progression de l'analyse en cours (toujours en haut)
     progress_zone = st.container()
-    
-    # Inversion pour traiter le dernier ajouté en premier (affichage vers le bas)
     for f in reversed(uploaded_files):
-        # On affiche le nom du fichier en cours d'analyse de façon propre
         analysis_data = process_audio(f, f.name, progress_zone)
         
         with st.container():
-            # Header du fichier
             st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
-            
-            # Carte de résultat
             color = "linear-gradient(135deg, #065f46, #064e3b)" if analysis_data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
             st.markdown(f"""
                 <div class="report-card" style="background:{color};">
-                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v4.0 <span class="sniper-badge">READY</span></p>
+                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v4.1 <span class="sniper-badge">CADENCE MODE</span></p>
                     <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">{analysis_data['key'].upper()}</h1>
                     <p style="font-size:1.5em; opacity:0.9;">CAMELOT: <b>{analysis_data['camelot']}</b> &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['conf']}%</b></p>
                     {f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']})</div>" if analysis_data['modulation'] else ""}
                 </div>
             """, unsafe_allow_html=True)
             
-            # Métriques
             m1, m2, m3 = st.columns(3)
             with m1: st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em; color:#10b981;'>{analysis_data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
             with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
@@ -236,7 +248,6 @@ if uploaded_files:
                     <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                 """, height=110)
 
-            # Graphes
             c1, c2 = st.columns([2, 1])
             with c1:
                 fig_tl = px.line(pd.DataFrame(analysis_data['timeline']), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
