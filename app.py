@@ -304,7 +304,7 @@ if uploaded_files:
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
     st.header("Paramètres Sniper")
-    st.info("Le moteur M3 croise les profils Krumhansl, Temperley et Bellman pour une précision chirurgicale.")
+    st.info("Le Sniper offre une précision chirurgicale.")
     if st.button("🧹 Vider la mémoire"):
         st.cache_data.clear()
         st.rerun()
