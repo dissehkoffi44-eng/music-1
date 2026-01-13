@@ -107,12 +107,10 @@ def solve_key_sniper(chroma_vector, bass_vector):
                     dom_idx = (i + 7) % 12 
                     leading_tone = (i + 11) % 12
                     if cv[dom_idx] > 0.45 and cv[leading_tone] > 0.35:
-                        score *= 1.35 # Le rôle structurel de la cadence
+                        score *= 1.35 
                 
-                # Bonus Basse (Tonique confirmée)
                 if bv[i] > 0.6: score += (bv[i] * 0.2)
                 
-                # Bonus Quinte & Tierce
                 fifth_idx = (i + 7) % 12
                 if cv[fifth_idx] > 0.5: score += 0.1
                 third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
@@ -185,19 +183,31 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "name": file_name
     }
     
-    # --- RAPPORT TELEGRAM ---
+    # --- RAPPORT TELEGRAM ENRICHI ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            caption = (f"🎯 *SNIPER M3 REPORT*\n━━━━━━━━━━━━\n"
-                       f"📂 `{file_name}`\n"
-                       f"🎹 *KEY:* `{final_key.upper()}` ({res_obj['camelot']})\n"
-                       f"🔥 *CONF:* `{res_obj['conf']}%`\n"
-                       f"⏱ *BPM:* `{res_obj['tempo']}`\n"
-                       f"🎸 *TUNING:* `{res_obj['tuning']}Hz`\n"
-                       f"━━━━━━━━━━━━")
+            now = datetime.now().strftime("%H:%M:%S")
+            mod_text = f"\n⚠️ *MODULATION:* `{target_key.upper()}` ({res_obj['target_camelot']})" if mod_detected else ""
+            
+            caption = (
+                f"🎯 *SNIPER M3 - RAPPORT D'ANALYSE*\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📂 *FICHIER:* `{file_name}`\n"
+                f"⏰ *HEURE:* `{now}`\n\n"
+                f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
+                f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
+                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`\n"
+                f"{mod_text}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
+                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz`\n"
+                f"📊 *STATUS:* `ANALYSE RÉUSSIE` ✅\n"
+                f"━━━━━━━━━━━━━━━━━━"
+            )
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                           data={'chat_id': CHAT_ID, 'text': caption, 'parse_mode': 'Markdown'})
-        except: pass
+        except Exception as e:
+            st.error(f"Erreur Telegram: {e}")
 
     del y, y_filt; gc.collect()
     return res_obj
