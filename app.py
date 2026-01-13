@@ -13,7 +13,7 @@ from scipy.signal import butter, lfilter
 from datetime import datetime
 
 # --- CONFIGURATION SYSTÈME ---
-st.set_page_config(page_title="RCDJ228 SNIPER M3", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="LE SNIPER", page_icon="🎯", layout="wide")
 
 # Récupération des secrets
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
@@ -109,15 +109,14 @@ def solve_key_sniper(chroma_vector, bass_vector, tuning):
                     
     return {"key": best_key, "score": best_overall_score}
 
-def process_audio(file_bytes, file_name):
+def process_audio(audio_file, file_name):
     # Barre de progression personnalisée
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # 1. Chargement
+    # 1. Chargement (Gestion RAM : librosa lit directement l'objet UploadedFile)
     status_text.text(f"🚀 Initialisation du scan : {file_name}")
-    with io.BytesIO(file_bytes) as b:
-        y, sr = librosa.load(b, sr=22050, mono=True)
+    y, sr = librosa.load(audio_file, sr=22050, mono=True)
     progress_bar.progress(20)
 
     # 2. Filtrage
@@ -244,16 +243,16 @@ def send_telegram_report(data, fig_tl):
 
 # --- INTERFACE UTILISATEUR ---
 
-st.title("🎯 RCDJ228 SNIPER M3")
+st.title("🎯 LE SNIPER")
 st.markdown("#### Système d'Analyse Harmonique Militaire | Précision 99%")
 
 uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio / Wav / MP3)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
 
 if uploaded_files:
-    # On inverse la liste pour que les derniers téléchargés/traités soient en haut
+    # On inverse la liste pour que les dernières analyses soient en haut
     for f in reversed(uploaded_files):
-        # On utilise le nom du fichier comme clé de cache
-        analysis_data = process_audio(f.read(), f.name)
+        # OPTIMISATION RAM : On passe l'objet 'f' directement au lieu de 'f.read()'
+        analysis_data = process_audio(f, f.name)
         
         with st.container():
             # Affichage du rapport
