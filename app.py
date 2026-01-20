@@ -13,7 +13,7 @@ from scipy.signal import butter, lfilter
 from datetime import datetime
 
 # --- CONFIGURATION SYSTÈME ---
-st.set_page_config(page_title="RCDJ228 SNIPER M3", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
 
 # Récupération des secrets
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
@@ -190,7 +190,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             mod_text = f"\n⚠️ *MODULATION:* `{target_key.upper()}` ({res_obj['target_camelot']})" if mod_detected else ""
             
             caption = (
-                f"🎯 *SNIPER M3 - RAPPORT D'ANALYSE*\n"
+                f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📂 *FICHIER:* `{file_name}`\n"
                 f"⏰ *HEURE:* `{now}`\n\n"
@@ -232,7 +232,7 @@ def get_chord_js(btn_id, key_str):
     """
 
 # --- DASHBOARD PRINCIPAL ---
-st.title("🎯 RCDJ228 SNIPER M3")
+st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique Militaire | Intégration Cadence Parfaite")
 
 uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
