@@ -233,7 +233,7 @@ def get_chord_js(btn_id, key_str):
 
 # --- DASHBOARD PRINCIPAL ---
 st.title("🎯 RCDJ228 MUSIC SNIPER")
-st.markdown("#### Système d'Analyse Harmonique Militaire | Intégration Cadence Parfaite")
+st.markdown("#### Système d'Analyse Harmonique 99% précis")
 
 uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
 
