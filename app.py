@@ -8,6 +8,7 @@ from collections import Counter
 import io
 import requests
 import gc
+import json  # <--- AJOUTEZ CETTE LIGNE ICI
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
@@ -187,9 +188,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            now = datetime.now().strftime("%H:%M:%S")
-            mod_text = f"\n⚠️ MODULATION: {res_obj['target_key'].upper()} ({res_obj['target_camelot']})" if mod_detected else ""
-            
             # 1. Préparation du texte
             caption = (
                 f"🎯 *RCDJ228 MUSIC SNIPER*\n"
@@ -197,27 +195,25 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 f"📂 *FICHIER:* `{file_name}`\n"
                 f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
                 f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
-                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`{mod_text}\n"
+                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`"
+                f"{mod_text if 'mod_text' in locals() else ''}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
-                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz`"
+                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅"
             )
 
-            # 2. Génération du Graphique RADAR
+            # 2. Génération du Graphique RADAR (Spectre)
             fig_radar = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
             fig_radar.update_layout(template="plotly_dark", title="SPECTRE HARMONIQUE", polar=dict(radialaxis=dict(visible=False)))
             radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
 
             # 3. Génération du Graphique TIMELINE
-            # On recrée l'objet figure pour l'export image
             df_tl = pd.DataFrame(res_obj['timeline'])
             fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark", 
-                             category_orders={"Note": NOTES_ORDER}, title="ÉVOLUTION DE LA TONALITÉ")
-            fig_tl.update_layout(yaxis_title=None, xaxis_title="Temps (sec)")
-            timeline_bytes = fig_tl.to_image(format="png", width=1000, height=400)
+                             category_orders={"Note": NOTES_ORDER}, title="ÉVOLUTION TEMPORELLE")
+            timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
 
-            # 4. Envoi groupé (Media Group) pour que les deux photos arrivent ensemble
-            # Note : La légende est attachée à la première photo
+            # 4. Envoi via sendMediaGroup (Album photo)
             media_group = [
                 {'type': 'photo', 'media': 'attach://radar.png', 'caption': caption, 'parse_mode': 'Markdown'},
                 {'type': 'photo', 'media': 'attach://timeline.png'}
