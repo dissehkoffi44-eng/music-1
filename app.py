@@ -184,60 +184,58 @@ def process_audio(audio_file, file_name, progress_placeholder):
     }
     
     # --- RAPPORT TELEGRAM ENRICHI ---
-    # --- RAPPORT TELEGRAM ENRICHI AVEC GRAPHIQUES ---
+    # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             now = datetime.now().strftime("%H:%M:%S")
             mod_text = f"\n⚠️ MODULATION: {res_obj['target_key'].upper()} ({res_obj['target_camelot']})" if mod_detected else ""
             
-            # 1. Préparation du texte (Légende)
+            # 1. Préparation du texte
             caption = (
-                f"🎯 RCDJ228 MUSIC SNIPER\n"
+                f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"📂 FICHIER: {file_name}\n"
-                f"🎹 TONALITÉ: {final_key.upper()}\n"
-                f"🌀 CAMELOT: {res_obj['camelot']}\n"
-                f"🔥 CONFIANCE: {res_obj['conf']}%"
-                f"{mod_text}\n"
+                f"📂 *FICHIER:* `{file_name}`\n"
+                f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
+                f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
+                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`{mod_text}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"⏱ TEMPO: {res_obj['tempo']} BPM\n"
-                f"🎸 ACCORDAGE: {res_obj['tuning']} Hz\n"
-                f"📊 STATUS: ANALYSE RÉUSSIE ✅"
+                f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
+                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz`"
             )
 
-            # 2. Génération de l'image du graphique Radar (Chroma)
-            # Nous utilisons le radar car il est le plus visuel pour Telegram
-            fig_radar = go.Figure(data=go.Scatterpolar(
-                r=res_obj['chroma'], 
-                theta=NOTES_LIST, 
-                fill='toself', 
-                line_color='#10b981'
-            ))
-            fig_radar.update_layout(
-                template="plotly_dark", 
-                title=f"Spectre Harmonique - {file_name}",
-                polar=dict(radialaxis=dict(visible=False))
-            )
+            # 2. Génération du Graphique RADAR
+            fig_radar = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
+            fig_radar.update_layout(template="plotly_dark", title="SPECTRE HARMONIQUE", polar=dict(radialaxis=dict(visible=False)))
+            radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
 
-            # Conversion du graphique en bytes PNG
-            img_bytes = fig_radar.to_image(format="png", width=800, height=600)
+            # 3. Génération du Graphique TIMELINE
+            # On recrée l'objet figure pour l'export image
+            df_tl = pd.DataFrame(res_obj['timeline'])
+            fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark", 
+                             category_orders={"Note": NOTES_ORDER}, title="ÉVOLUTION DE LA TONALITÉ")
+            fig_tl.update_layout(yaxis_title=None, xaxis_title="Temps (sec)")
+            timeline_bytes = fig_tl.to_image(format="png", width=1000, height=400)
 
-            # 3. Envoi à Telegram (Photo + Légende)
-            files = {'photo': ('graph.png', img_bytes, 'image/png')}
-            payload = {
-                'chat_id': CHAT_ID,
-                'caption': caption,
-                'parse_mode': 'Markdown' # Note: Retirez Markdown si les caractères spéciaux bloquent
-            }
+            # 4. Envoi groupé (Media Group) pour que les deux photos arrivent ensemble
+            # Note : La légende est attachée à la première photo
+            media_group = [
+                {'type': 'photo', 'media': 'attach://radar.png', 'caption': caption, 'parse_mode': 'Markdown'},
+                {'type': 'photo', 'media': 'attach://timeline.png'}
+            ]
             
+            files = {
+                'radar.png': radar_bytes,
+                'timeline.png': timeline_bytes
+            }
+
             requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                data=payload,
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
+                data={'chat_id': CHAT_ID, 'media': json.dumps(media_group)},
                 files=files
             )
 
         except Exception as e:
-            st.error(f"Erreur Telegram: {e}")
+            st.error(f"Erreur d'envoi Telegram : {e}")
 
     del y, y_filt; gc.collect()
     return res_obj
