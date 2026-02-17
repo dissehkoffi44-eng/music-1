@@ -8,7 +8,7 @@ from collections import Counter
 import io
 import requests
 import gc
-import json  # <--- AJOUTEZ CETTE LIGNE ICI
+import json
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
@@ -101,6 +101,33 @@ def get_bass_priority(y, sr):
     chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12)
     return np.mean(chroma_bass, axis=1)
 
+def detect_cadence_resolution(timeline, final_key):
+    """
+    Détection des cadences de résolution (ex. : V-I) pour valider la tonique.
+    Vérifie les transitions vers la tonique putative à la fin ou dans des segments clés.
+    """
+    note, mode = final_key.split()
+    root_idx = NOTES_LIST.index(note)
+    dom_idx = (root_idx + 7) % 12  # Dominante (V)
+    subdom_idx = (root_idx + 5) % 12  # Sous-dominante (IV), optionnel
+    
+    resolution_count = 0
+    for i in range(1, len(timeline)):
+        prev_note = timeline[i-1]["Note"]
+        curr_note = timeline[i]["Note"]
+        if prev_note.startswith(NOTES_LIST[dom_idx]) and curr_note == final_key:
+            resolution_count += 1
+        elif prev_note.startswith(NOTES_LIST[subdom_idx]) and curr_note == final_key:
+            resolution_count += 0.5  # Poids moindre pour II-V-I ou IV-I
+    
+    # Bonus si résolutions fréquentes, surtout à la fin
+    last_third = len(timeline) // 3
+    last_resolutions = sum(1 for j in range(len(timeline) - last_third, len(timeline) - 1) 
+                          if timeline[j]["Note"].startswith(NOTES_LIST[dom_idx]) and timeline[j+1]["Note"] == final_key)
+    
+    cadence_score = resolution_count + (last_resolutions * 2)  # Double poids pour fin
+    return cadence_score
+
 def solve_key_sniper(chroma_vector, bass_vector):
     best_overall_score = -1
     best_key = "Unknown"
@@ -176,17 +203,32 @@ def process_audio(audio_file, file_name, progress_placeholder):
         b_seg = get_bass_priority(y[idx_start:idx_end], sr)
         
         res = solve_key_sniper(c_avg, b_seg)
-        weight = 2.0 if (start < 10 or start > (duration - 15)) else 1.0
+        
+        # Augmentation du poids pour segments finaux (résolution vers tonique)
+        weight = 3.0 if start > (duration - 15) else 2.0 if start < 10 else 1.0  # Plus de poids à la fin pour "sentiment d'achèvement"
         votes[res['key']] += int(res['score'] * 100 * weight)
         timeline.append({"Temps": start, "Note": res['key'], "Conf": res['score']})
         
         p_val = 50 + int((i / len(segments)) * 40)
         update_prog(p_val, "Calcul chirurgical en cours")
 
-    update_prog(95, "Synthèse finale")
+    update_prog(90, "Synthèse finale et validation de la tonique")
     most_common = votes.most_common(2)
     final_key = most_common[0][0]
     final_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == final_key]) * 100)
+    
+    # Validation supplémentaire via détection de cadences et résolution
+    cadence_score = detect_cadence_resolution(timeline, final_key)
+    if cadence_score < 2 and len(most_common) > 1:  # Si peu de résolutions, considérer la clé alternative si proche
+        alt_key = most_common[1][0]
+        alt_cadence = detect_cadence_resolution(timeline, alt_key)
+        if alt_cadence > cadence_score + 1:
+            final_key = alt_key
+            final_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == final_key]) * 100)
+    
+    # Bonus de confiance si forte résolution à la fin
+    if timeline and timeline[-1]["Note"] == final_key:
+        final_conf = min(final_conf + 5, 99)  # Bonus pour fin sur la tonique
     
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
     target_key = most_common[1][0] if mod_detected else None
