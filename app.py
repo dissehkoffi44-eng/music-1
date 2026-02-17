@@ -238,13 +238,6 @@ def get_key_score(key, chroma_vector, bass_vector):
     
     return max(profile_scores)
 
-"""
-Amélioration de la robustesse :Dans la détection de tonalité, les profils (Krumhansl, Temperley, etc.) fonctionnent bien sur des chroma bien définis. En limitant aux top 4 (au lieu de tous les 24 possibles : 12 notes × 2 modes), tu optimises : tu filtres via le vote (basé sur la fréquence d'apparition), puis raffines via le score global (basé sur la corrélation pure).
-C'est particulièrement efficace pour la musique électronique/EDM (comme dans ton app "RCDJ228 MUSIC SNIPER"), où les basses et harmonies sont prononcées, mais les modulations sont courantes. Ton ajout de bass_priority et de checks sur la tierce/quinte renforce ça.
-Exemple : Si un morceau est en C major mais module brièvement en A minor (relatif), le vote mettra C major en top, mais le global confirmera si la consonance globale penche plus vers l'un ou l'autre.
-
-Intégration des cadences et bonus :Tu gardes les checks de cadences (V-I resolutions) et le bonus si la fin est sur la tonique, ce qui est excellent pour valider musicalement. Ça ajoute une couche "théorique" au-delà des stats pures, rendant l'approche plus musicale que purement algorithmique.
-"""
 
 def process_audio(audio_file, file_name, progress_placeholder):
     status_text = progress_placeholder.empty()
