@@ -101,6 +101,54 @@ def get_bass_priority(y, sr):
     chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12)
     return np.mean(chroma_bass, axis=1)
 
+def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm_threshold=0.3, perc_threshold=0.5):
+    """
+    Détecte les sections harmoniques en ignorant les intros/outros avec seulement kicks ou voix parlée.
+    - harm_threshold: Seuil de variance chroma pour contenu harmonique.
+    - perc_threshold: Seuil pour détecter percussion dominante (via spectral flatness).
+    Retourne les temps de début et fin de la section harmonique principale.
+    """
+    # Calcul global des features
+    chroma_full = librosa.feature.chroma_cqt(y=y, sr=sr, n_chroma=12)
+    flatness = librosa.feature.spectral_flatness(y=y)  # Haut pour percussion/voix parlée, bas pour harmonie
+    
+    harmonic_starts = []
+    segments = range(0, int(duration) - step, step // 2)  # Plus fin pour détection
+    
+    for start in segments:
+        idx_start, idx_end = int(start * sr), int((start + step) * sr)
+        seg_chroma = chroma_full[:, idx_start//(sr//2048):idx_end//(sr//2048)]  # Approx hop_length=2048
+        chroma_var = np.var(seg_chroma)  # Variance chroma: haute pour harmonie riche
+        
+        seg_flat = np.mean(flatness[0, idx_start//512:idx_end//512])  # hop=512 par défaut
+        
+        # Segment harmonique si variance chroma > seuil ET flatness < seuil (pas trop percussif)
+        if chroma_var > harm_threshold and seg_flat < perc_threshold:
+            harmonic_starts.append(start)
+    
+    if not harmonic_starts:
+        return 0, duration  # Fallback: toute la chanson
+    
+    # Trouver la section harmonique principale (plus longue séquence continue)
+    harmonic_starts = np.array(harmonic_starts)
+    diffs = np.diff(harmonic_starts)
+    breaks = np.where(diffs > step)[0]
+    
+    sections = np.split(harmonic_starts, breaks + 1)
+    longest_section = max(sections, key=len)
+    
+    if len(longest_section) * step < min_harm_duration:
+        return 0, duration  # Si trop court, fallback
+    
+    harm_start = longest_section[0]
+    harm_end = longest_section[-1] + step
+    
+    # Ajuster pour ignorer intros/outros courts
+    harm_start = max(harm_start, 5)  # Skip premiers 5s si possible
+    harm_end = min(harm_end, duration - 5)
+    
+    return harm_start, harm_end
+
 def detect_cadence_resolution(timeline, final_key):
     """
     Détection des cadences de résolution (ex. : V-I) pour valider la tonique.
@@ -184,14 +232,24 @@ def process_audio(audio_file, file_name, progress_placeholder):
     else:
         y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
     
-    update_prog(30, "Filtrage des fréquences")
+    update_prog(20, "Détection des sections harmoniques")
     duration = librosa.get_duration(y=y, sr=sr)
-    tuning = librosa.estimate_tuning(y=y, sr=sr)
-    y_filt = apply_sniper_filters(y, sr)
+    harm_start, harm_end = detect_harmonic_sections(y, sr, duration)
+    update_prog(30, f"Section harmonique détectée : {seconds_to_mmss(harm_start)} à {seconds_to_mmss(harm_end)}")
+    
+    # Limiter l'analyse à la section harmonique
+    idx_harm_start = int(harm_start * sr)
+    idx_harm_end = int(harm_end * sr)
+    y_harm = y[idx_harm_start:idx_harm_end]
+    duration_harm = harm_end - harm_start
+    
+    update_prog(40, "Filtrage des fréquences")
+    tuning = librosa.estimate_tuning(y=y_harm, sr=sr)
+    y_filt = apply_sniper_filters(y_harm, sr)
 
     update_prog(50, "Analyse du spectre harmonique")
     step, timeline, votes = 6, [], Counter()
-    segments = range(0, int(duration) - step, 2)
+    segments = range(0, int(duration_harm) - step, 2)
     
     for i, start in enumerate(segments):
         idx_start, idx_end = int(start * sr), int((start + step) * sr)
@@ -200,14 +258,14 @@ def process_audio(audio_file, file_name, progress_placeholder):
         
         c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=24, bins_per_octave=24)
         c_avg = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
-        b_seg = get_bass_priority(y[idx_start:idx_end], sr)
+        b_seg = get_bass_priority(y_harm[idx_start:idx_end], sr)
         
         res = solve_key_sniper(c_avg, b_seg)
         
         # Augmentation du poids pour segments finaux (résolution vers tonique)
-        weight = 3.0 if start > (duration - 15) else 2.0 if start < 10 else 1.0  # Plus de poids à la fin pour "sentiment d'achèvement"
+        weight = 3.0 if start > (duration_harm - 15) else 2.0 if start < 10 else 1.0  # Plus de poids à la fin pour "sentiment d'achèvement"
         votes[res['key']] += int(res['score'] * 100 * weight)
-        timeline.append({"Temps": start, "Note": res['key'], "Conf": res['score']})
+        timeline.append({"Temps": harm_start + start, "Note": res['key'], "Conf": res['score']})  # Ajuster temps absolu
         
         p_val = 50 + int((i / len(segments)) * 40)
         update_prog(p_val, "Calcul chirurgical en cours")
@@ -266,7 +324,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 last_key = last_counter.most_common(1)[0][0]
                 ends_in_target = (last_key == target_key)
 
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+    tempo, _ = librosa.beat.beat_track(y=y_harm, sr=sr)  # Tempo sur section harmonique
     chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
 
     update_prog(100, "Analyse terminée")
@@ -282,7 +340,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "name": file_name,
         "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
         "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
-        "mod_ends_in_target": ends_in_target if mod_detected else False
+        "mod_ends_in_target": ends_in_target if mod_detected else False,
+        "harm_start": seconds_to_mmss(harm_start), "harm_end": seconds_to_mmss(harm_end)
     }
     
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -304,7 +363,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 f"🔥 *CONFIANCE:* `{res_obj['conf']}%`{mod_line}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
-                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅"
+                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
+                f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
             )
 
             # 2. Génération du Graphique RADAR (Spectre)
