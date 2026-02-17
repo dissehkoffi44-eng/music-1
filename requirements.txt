@@ -3,6 +3,7 @@ librosa
 numpy
 pandas
 plotly
-requests
 scipy
+requests
+pydub
 kaleido==0.2.1
