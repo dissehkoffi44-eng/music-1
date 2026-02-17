@@ -12,6 +12,9 @@ import json  # <--- AJOUTEZ CETTE LIGNE ICI
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
+from pydub import AudioSegment
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import pdist
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -78,6 +81,13 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
+def seconds_to_mmss(seconds):
+    if seconds is None:
+        return "??:??"
+    mins = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{mins:02d}:{secs:02d}"
+
 def apply_sniper_filters(y, sr):
     y_harm = librosa.effects.harmonic(y, margin=4.0)
     nyq = 0.5 * sr
@@ -132,9 +142,20 @@ def process_audio(audio_file, file_name, progress_placeholder):
         status_text.markdown(f"**{text} | {value}%**")
 
     update_prog(10, f"Chargement de {file_name}")
-    
     file_bytes = audio_file.getvalue()
-    y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
+    ext = file_name.split('.')[-1].lower()
+    if ext == 'm4a':
+        audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="m4a")
+        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+        if audio.channels == 2:
+            samples = samples.reshape((-1, 2)).mean(axis=1)
+        y = samples / (2**15)
+        sr = audio.frame_rate
+        if sr != 22050:
+            y = librosa.resample(y, orig_sr=sr, target_sr=22050)
+            sr = 22050
+    else:
+        y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
     
     update_prog(30, "Filtrage des fréquences")
     duration = librosa.get_duration(y=y, sr=sr)
@@ -170,6 +191,39 @@ def process_audio(audio_file, file_name, progress_placeholder):
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
     target_key = most_common[1][0] if mod_detected else None
 
+    modulation_time = None
+    target_percentage = 0
+    ends_in_target = False
+
+    if mod_detected and target_key:
+        target_times = np.array([t["Temps"] for t in timeline if t["Note"] == target_key])
+        if len(target_times) > 3:
+            dist = pdist(target_times.reshape(-1,1), 'euclidean')
+            Z = linkage(target_times.reshape(-1,1), method='single')
+            clust = fcluster(Z, t=5, criterion='distance')  # Clusters si <5s apart
+            max_cluster_size = max(Counter(clust).values()) * 2  # Taille en secondes approx
+            if max_cluster_size < 10:  # Seuil minimal pour vraie modulation
+                mod_detected = False  # Ignore si pas continu
+        if mod_detected:
+            candidates = [t["Temps"] for t in timeline if t["Note"] == target_key and t["Conf"] >= 0.84]
+            if candidates:
+                modulation_time = min(candidates)
+            else:
+                sorted_times = sorted(target_times)
+                modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
+
+            total_valid = len(timeline)
+            if total_valid > 0:
+                target_count = sum(1 for t in timeline if t["Note"] == target_key)
+                target_percentage = (target_count / total_valid) * 100
+
+            if timeline:
+                last_n = max(5, len(timeline) // 10)
+                last_segments = timeline[-last_n:]
+                last_counter = Counter(s["Note"] for s in last_segments)
+                last_key = last_counter.most_common(1)[0][0]
+                ends_in_target = (last_key == target_key)
+
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
 
@@ -183,27 +237,29 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
         "chroma": chroma_avg, "modulation": mod_detected,
         "target_key": target_key, "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
-        "name": file_name
+        "name": file_name,
+        "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
+        "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
+        "mod_ends_in_target": ends_in_target if mod_detected else False
     }
     
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            # Définition de mod_text pour l'affichage de la modulation
-            if res_obj['modulation']:
-                mod_text = f"\n⚠️ *MODULATION DÉTECTÉE:* `{res_obj['target_key'].upper()} ({res_obj['target_camelot']})`"
-            else:
-                mod_text = ""
-
             # 1. Préparation du texte
+            mod_line = ""
+            if mod_detected:
+                perc = res_obj["mod_target_percentage"]
+                end_txt = " → **fin en " + target_key.upper() + " (" + res_obj['target_camelot'] + ")**" if res_obj['mod_ends_in_target'] else ""
+                mod_line = f"\n⚠️ *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
+            
             caption = (
                 f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📂 *FICHIER:* `{file_name}`\n"
                 f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
                 f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
-                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`"
-                f"{mod_text}\n"
+                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`{mod_line}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
                 f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅"
