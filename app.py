@@ -208,6 +208,36 @@ def solve_key_sniper(chroma_vector, bass_vector):
                     
     return {"key": best_key, "score": best_overall_score}
 
+def get_key_score(key, chroma_vector, bass_vector):
+    note, mode = key.split()
+    root_idx = NOTES_LIST.index(note)
+    
+    cv_norm = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
+    bv_norm = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
+    
+    profile_scores = []
+    for p_name, p_data in PROFILES.items():
+        corr = np.corrcoef(cv_norm, np.roll(p_data[mode], root_idx))[0, 1]
+        
+        score = corr
+        
+        if mode == "minor":
+            dom_idx = (root_idx + 7) % 12 
+            leading_tone = (root_idx + 11) % 12
+            if cv_norm[dom_idx] > 0.45 and cv_norm[leading_tone] > 0.35:
+                score *= 1.35 
+        
+        if bv_norm[root_idx] > 0.6: score += (bv_norm[root_idx] * 0.2)
+        
+        fifth_idx = (root_idx + 7) % 12
+        if cv_norm[fifth_idx] > 0.5: score += 0.1
+        third_idx = (root_idx + 4) % 12 if mode == "major" else (root_idx + 3) % 12
+        if cv_norm[third_idx] > 0.5: score += 0.1
+        
+        profile_scores.append(score)
+    
+    return max(profile_scores)
+
 def process_audio(audio_file, file_name, progress_placeholder):
     status_text = progress_placeholder.empty()
     progress_bar = progress_placeholder.progress(0)
@@ -247,6 +277,10 @@ def process_audio(audio_file, file_name, progress_placeholder):
     tuning = librosa.estimate_tuning(y=y_harm, sr=sr)
     y_filt = apply_sniper_filters(y_harm, sr)
 
+    # Calcul global chroma et bass pour vote final
+    chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
+    bass_global = get_bass_priority(y_harm, sr)
+
     update_prog(50, "Analyse du spectre harmonique")
     step, timeline, votes = 6, [], Counter()
     segments = range(0, int(duration_harm) - step, 2)
@@ -271,18 +305,25 @@ def process_audio(audio_file, file_name, progress_placeholder):
         update_prog(p_val, "Calcul chirurgical en cours")
 
     update_prog(90, "Synthèse finale et validation de la tonique")
-    most_common = votes.most_common(2)
-    final_key = most_common[0][0]
-    final_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == final_key]) * 100)
+    most_common = votes.most_common(4)
+    
+    # Vote final sur les 4 meilleurs prétendants basé sur la consonance globale
+    global_scores = {}
+    for key, _ in most_common:
+        global_scores[key] = get_key_score(key, chroma_avg, bass_global)
+    
+    final_key = max(global_scores, key=global_scores.get)
+    final_conf = int(global_scores[final_key] * 100)
     
     # Validation supplémentaire via détection de cadences et résolution
     cadence_score = detect_cadence_resolution(timeline, final_key)
-    if cadence_score < 2 and len(most_common) > 1:  # Si peu de résolutions, considérer la clé alternative si proche
-        alt_key = most_common[1][0]
-        alt_cadence = detect_cadence_resolution(timeline, alt_key)
-        if alt_cadence > cadence_score + 1:
-            final_key = alt_key
-            final_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == final_key]) * 100)
+    if cadence_score < 2 and len(most_common) > 1:
+        alt_keys = [k for k, _ in most_common if k != final_key]
+        alt_cadences = {ak: detect_cadence_resolution(timeline, ak) for ak in alt_keys}
+        best_alt = max(alt_cadences, key=alt_cadences.get)
+        if alt_cadences[best_alt] > cadence_score + 1:
+            final_key = best_alt
+            final_conf = int(get_key_score(final_key, chroma_avg, bass_global) * 100)
     
     # Bonus de confiance si forte résolution à la fin
     if timeline and timeline[-1]["Note"] == final_key:
@@ -325,7 +366,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 ends_in_target = (last_key == target_key)
 
     tempo, _ = librosa.beat.beat_track(y=y_harm, sr=sr)  # Tempo sur section harmonique
-    chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
 
     update_prog(100, "Analyse terminée")
     status_text.empty()
