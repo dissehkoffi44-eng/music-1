@@ -10,12 +10,11 @@ import requests
 import gc
 import json  # <--- AJOUTEZ CETTE LIGNE ICI
 import streamlit.components.v1 as components
-from scipy.signal import butter, lfilter, find_peaks
+from scipy.signal import butter, lfilter
 from datetime import datetime
 from pydub import AudioSegment
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
-from scipy.ndimage import gaussian_filter1d
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -47,14 +46,8 @@ PROFILES = {
     "bellman": {
         "major": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
         "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4]
-    },
-    "diatonic": {  # Nouveau profil diatonique simple
-        "major": [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1],
-        "minor": [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0]
     }
 }
-
-FIFTHS_ORDER = ['A', 'D', 'G', 'C', 'F', 'A#', 'D#', 'G#', 'C#', 'F#', 'B', 'E']
 
 # --- STYLES CSS ---
 st.markdown("""
@@ -108,72 +101,36 @@ def get_bass_priority(y, sr):
     chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12)
     return np.mean(chroma_bass, axis=1)
 
-def get_fifths_vector(chroma):
-    # Réordonne chroma (0=C,1=C#,...) en ordre quintes
-    pc_to_fifths = {0:3, 1:8, 2:1, 3:6, 4:11, 5:4, 6:9, 7:2, 8:7, 9:0, 10:5, 11:10}  # Map C-based to fifths
-    return np.array([chroma[pc_to_fifths[i]] for i in range(12)])
-
-def find_main_axis(k_vec):  # k_vec = fifths_vector normalisé
-    max_val, best_axis = -np.inf, None
-    for y_idx in range(12):
-        z_idx = (y_idx + 6) % 12
-        left_sum = np.sum(k_vec[(y_idx + 1) % 12 : (y_idx + 6) % 12 + 1 if (y_idx + 6) % 12 < (y_idx + 1) % 12 else (y_idx + 6) % 12])
-        right_sum = np.sum(k_vec[(y_idx + 7) % 12 : (y_idx + 12) % 12 + 1 if (y_idx + 12) % 12 < (y_idx + 7) % 12 else (y_idx + 12) % 12]) + k_vec[z_idx] / 2
-        val = right_sum - left_sum
-        if val > max_val:
-            max_val = val
-            best_axis = (FIFTHS_ORDER[y_idx], FIFTHS_ORDER[z_idx])
-    return best_axis
-
 def solve_key_sniper(chroma_vector, bass_vector):
-    cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
-    bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
-    
-    # Signature of Fifths
-    fifths_vec = get_fifths_vector(cv)
-    axis = find_main_axis(fifths_vec)
-    if not axis:
-        return {"key": "Unknown", "score": 0}
-    
-    # Rotate 30° clockwise approx
-    rotate_idx = (FIFTHS_ORDER.index(axis[0]) + 1) % 12
-    candidates = [f"{FIFTHS_ORDER[rotate_idx]} major", f"{FIFTHS_ORDER[(rotate_idx + 9) % 12]} minor"]
-    
     best_overall_score = -1
     best_key = "Unknown"
     
-    for cand in candidates:
-        note, mode = cand.split()
-        i = NOTES_LIST.index(note)
-        
-        # Moyenne des scores sur tous les profils (hybridation)
-        scores = []
-        for p_name, p_data in PROFILES.items():
-            profile = p_data[mode]
-            shifted_profile = np.roll(profile, -i)  # Shift pour aligner à la root
-            score = np.corrcoef(cv, shifted_profile)[0, 1]
-            
-            # LOGIQUE DE CADENCE PARFAITE
-            if mode == "minor":
-                dom_idx = (i + 7) % 12 
-                leading_tone = (i + 11) % 12
-                if cv[dom_idx] > 0.45 and cv[leading_tone] > 0.35:
-                    score *= 1.35 
-            
-            if bv[i] > 0.6: score += (bv[i] * 0.2)
-            
-            fifth_idx = (i + 7) % 12
-            if cv[fifth_idx] > 0.5: score += 0.1
-            third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
-            if cv[third_idx] > 0.5: score += 0.1
-            
-            scores.append(score)
-        
-        avg_score = np.mean(scores)
-        if avg_score > best_overall_score:
-            best_overall_score = avg_score
-            best_key = cand
+    cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
+    bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
     
+    for p_name, p_data in PROFILES.items():
+        for mode in ["major", "minor"]:
+            for i in range(12):
+                score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
+                
+                # --- LOGIQUE DE CADENCE PARFAITE ---
+                if mode == "minor":
+                    dom_idx = (i + 7) % 12 
+                    leading_tone = (i + 11) % 12
+                    if cv[dom_idx] > 0.45 and cv[leading_tone] > 0.35:
+                        score *= 1.35 
+                
+                if bv[i] > 0.6: score += (bv[i] * 0.2)
+                
+                fifth_idx = (i + 7) % 12
+                if cv[fifth_idx] > 0.5: score += 0.1
+                third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
+                if cv[third_idx] > 0.5: score += 0.1
+                
+                if score > best_overall_score:
+                    best_overall_score = score
+                    best_key = f"{NOTES_LIST[i]} {mode}"
+                    
     return {"key": best_key, "score": best_overall_score}
 
 def process_audio(audio_file, file_name, progress_placeholder):
@@ -205,63 +162,20 @@ def process_audio(audio_file, file_name, progress_placeholder):
     tuning = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_sniper_filters(y, sr)
 
-    # Spectral whitening (pré-emphasis)
-    y_whitened = librosa.effects.preemphasis(y_filt)
-
-    # Compute spectrogram pour extensions
-    S = np.abs(librosa.stft(y_whitened))
-    freqs = librosa.fft_frequencies(sr=sr)
-
-    # Peak Detection: Trouve pics par classe de pitch
-    chroma_pd = np.zeros((12, S.shape[1]))
-    for frame in range(S.shape[1]):
-        peaks, _ = find_peaks(S[:, frame], height=0.1 * np.max(S[:, frame]))  # Seuil adaptatif
-        for p in peaks:
-            midi_note = librosa.hz_to_midi(freqs[p])
-            pc = int(midi_note % 12)
-            chroma_pd[pc, frame] += S[p, frame]  # Ajoute amplitude du pic
-
-    # Low Frequency Clarification: Pour basses (<220 Hz), supprime pics ambigus
-    low_freq_mask = freqs < 220
-    for frame in range(S.shape[1]):
-        low_peaks = peaks[np.where(low_freq_mask[peaks])[0]] if np.any(low_freq_mask[peaks]) else []
-        if len(low_peaks) > 0:
-            strongest = np.argmax(S[low_peaks, frame])
-            for idx in range(len(low_peaks)):
-                if idx != strongest and abs(freqs[low_peaks[idx]] - freqs[low_peaks[strongest]]) < 10:  # Proche en Hz
-                    chroma_pd[:, frame] *= 0.5  # Réduit poids
-
     update_prog(50, "Analyse du spectre harmonique")
     step, timeline, votes = 6, [], Counter()
-    segments = range(0, int(duration) - step, 1)  # Réduit à tous les 1s pour plus de granularité
+    segments = range(0, int(duration) - step, 2)
     
     for i, start in enumerate(segments):
         idx_start, idx_end = int(start * sr), int((start + step) * sr)
         seg = y_filt[idx_start:idx_end]
         if np.max(np.abs(seg)) < 0.01: continue
         
-        # Multi-scale analysis: Chroma avec deux fenêtres (n_fft=4096 et 8192)
-        chroma_short = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
-        chroma_long = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
-        c_raw = np.mean(librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12), axis=1)
-        
-        # Intègre chroma_pd pour le segment (approx, ajuste si besoin)
-        frame_start = int(idx_start / 1024)  # Approx hop=1024
-        frame_end = int(idx_end / 1024)
-        c_avg = np.mean(chroma_pd[:, max(0, frame_start):min(chroma_pd.shape[1], frame_end)], axis=1)
-        c_avg = (c_avg + np.mean(c_raw, axis=0)) / 2  # Fusionne avec chroma_cqt
-        
-        # Lissage gaussien
-        c_avg_smoothed = gaussian_filter1d(c_avg, sigma=1.5)
-        
-        # Periodic Cleanup: Tous les 4 segments (~4s), reset bas valeurs
-        if i % 4 == 0:
-            threshold = 0.2 * np.max(c_avg_smoothed)
-            c_avg_smoothed[c_avg_smoothed < threshold] = 0
-        
+        c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=24, bins_per_octave=24)
+        c_avg = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
         b_seg = get_bass_priority(y[idx_start:idx_end], sr)
         
-        res = solve_key_sniper(c_avg_smoothed, b_seg)
+        res = solve_key_sniper(c_avg, b_seg)
         weight = 2.0 if (start < 10 or start > (duration - 15)) else 1.0
         votes[res['key']] += int(res['score'] * 100 * weight)
         timeline.append({"Temps": start, "Note": res['key'], "Conf": res['score']})
@@ -287,7 +201,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             dist = pdist(target_times.reshape(-1,1), 'euclidean')
             Z = linkage(target_times.reshape(-1,1), method='single')
             clust = fcluster(Z, t=5, criterion='distance')  # Clusters si <5s apart
-            max_cluster_size = max(Counter(clust).values()) * 1  # Taille en secondes approx (ajusté pour incrément 1s)
+            max_cluster_size = max(Counter(clust).values()) * 2  # Taille en secondes approx
             if max_cluster_size < 10:  # Seuil minimal pour vraie modulation
                 mod_detected = False  # Ignore si pas continu
         if mod_detected:
