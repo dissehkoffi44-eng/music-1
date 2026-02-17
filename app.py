@@ -163,9 +163,20 @@ def detect_cadence_resolution(timeline, final_key):
     for i in range(1, len(timeline)):
         prev_note = timeline[i-1]["Note"]
         curr_note = timeline[i]["Note"]
-        if prev_note.startswith(NOTES_LIST[dom_idx]) and curr_note == final_key:
-            resolution_count += 1
-        elif prev_note.startswith(NOTES_LIST[subdom_idx]) and curr_note == final_key:
+        
+        # Pour la dominante (V)
+        dom_key = f"{NOTES_LIST[dom_idx]} {mode}"
+        if mode == 'minor':
+            # En mode mineur, permettre dominante majeure (harmonique) ou mineure (naturel)
+            if (prev_note == f"{NOTES_LIST[dom_idx]} major" or prev_note == dom_key) and curr_note == final_key:
+                resolution_count += 1 if 'major' in prev_note else 0.5  # Poids plus élevé pour harmonique
+        else:
+            if prev_note == dom_key and curr_note == final_key:
+                resolution_count += 1
+        
+        # Pour la sous-dominante (IV)
+        subdom_key = f"{NOTES_LIST[subdom_idx]} {mode}"
+        if prev_note == subdom_key and curr_note == final_key:
             resolution_count += 0.5  # Poids moindre pour II-V-I ou IV-I
     
     # Bonus si résolutions fréquentes, surtout à la fin
@@ -183,9 +194,10 @@ def solve_key_sniper(chroma_vector, bass_vector):
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
     
-    for p_name, p_data in PROFILES.items():
-        for mode in ["major", "minor"]:
-            for i in range(12):
+    for mode in ["major", "minor"]:
+        for i in range(12):
+            profile_scores = []
+            for p_name, p_data in PROFILES.items():
                 score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
                 
                 # --- LOGIQUE DE CADENCE PARFAITE ---
@@ -202,9 +214,12 @@ def solve_key_sniper(chroma_vector, bass_vector):
                 third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
                 if cv[third_idx] > 0.5: score += 0.1
                 
-                if score > best_overall_score:
-                    best_overall_score = score
-                    best_key = f"{NOTES_LIST[i]} {mode}"
+                profile_scores.append(score)
+            
+            avg_score = np.mean(profile_scores)
+            if avg_score > best_overall_score:
+                best_overall_score = avg_score
+                best_key = f"{NOTES_LIST[i]} {mode}"
                     
     return {"key": best_key, "score": best_overall_score}
 
@@ -236,15 +251,8 @@ def get_key_score(key, chroma_vector, bass_vector):
         
         profile_scores.append(score)
     
-    return max(profile_scores)
+    return np.mean(profile_scores)
 
-"""
-Amélioration de la robustesse :Dans la détection de tonalité, les profils (Krumhansl, Temperley, etc.) fonctionnent bien sur des chroma bien définis. En limitant aux top 4 (au lieu de tous les 24 possibles : 12 notes × 2 modes), tu optimises : tu filtres via le vote (basé sur la fréquence d'apparition), puis raffines via le score global (basé sur la corrélation pure).
-C'est particulièrement efficace pour la musique électronique/EDM (comme dans ton app "RCDJ228 MUSIC SNIPER"), où les basses et harmonies sont prononcées, mais les modulations sont courantes. Ton ajout de bass_priority et de checks sur la tierce/quinte renforce ça.
-Exemple : Si un morceau est en C major mais module brièvement en A minor (relatif), le vote mettra C major en top, mais le global confirmera si la consonance globale penche plus vers l'un ou l'autre.
-
-Intégration des cadences et bonus :Tu gardes les checks de cadences (V-I resolutions) et le bonus si la fin est sur la tonique, ce qui est excellent pour valider musicalement. Ça ajoute une couche "théorique" au-delà des stats pures, rendant l'approche plus musicale que purement algorithmique.
-"""
 
 def process_audio(audio_file, file_name, progress_placeholder):
     status_text = progress_placeholder.empty()
