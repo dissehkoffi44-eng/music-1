@@ -54,7 +54,7 @@ PROFILES = {
     }
 }
 
-FIFTHS_ORDER = ['A', 'D', 'G', 'C', 'F', 'Bb', 'Eb', 'Ab', 'Db', 'F#', 'B', 'E']
+FIFTHS_ORDER = ['A', 'D', 'G', 'C', 'F', 'A#', 'D#', 'G#', 'C#', 'F#', 'B', 'E']
 
 # --- STYLES CSS ---
 st.markdown("""
