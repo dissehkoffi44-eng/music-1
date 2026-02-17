@@ -322,17 +322,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
     update_prog(90, "Synthèse finale et validation de la tonique")
     most_common = votes.most_common(10)
-    
-    # Vote final sur les 10 meilleurs prétendants basé sur la consonance globale
     total_votes = sum(votes.values())
-    global_scores = {}
-    for key, count in most_common:
-        score_global = get_key_score(key, chroma_avg, bass_global)
-        vote_percentage = count / total_votes if total_votes > 0 else 0
-        global_scores[key] = score_global * vote_percentage
-    
-    final_key = max(global_scores, key=global_scores.get)
-    final_conf = int(global_scores[final_key] * 100)
+
+    # Sélection de la tonalité principale basée sur la meilleure consonance globale sur toute la durée
+    res_global = solve_key_sniper(chroma_avg, bass_global)
+    final_key = res_global['key']
+    final_conf = int(res_global['score'] * 100)
     
     # Validation supplémentaire via détection de cadences et résolution
     cadence_score = detect_cadence_resolution(timeline, final_key)
@@ -342,9 +337,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         best_alt = max(alt_cadences, key=alt_cadences.get)
         if alt_cadences[best_alt] > cadence_score + 1:
             final_key = best_alt
-            score_global_alt = get_key_score(final_key, chroma_avg, bass_global)
-            vote_percentage_alt = votes[final_key] / total_votes if total_votes > 0 else 0
-            final_conf = int(score_global_alt * vote_percentage_alt * 100)
+            final_conf = int(get_key_score(final_key, chroma_avg, bass_global) * 100)
     
     # Bonus de confiance si forte résolution à la fin
     if timeline and timeline[-1]["Note"] == final_key:
@@ -354,7 +347,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
     target_key = most_common[1][0] if mod_detected else None
 
     # Calcul de la confiance pour la modulation (similaire à la confiance principale)
-    target_conf = min(int(global_scores.get(target_key, 0) * 100), 99) if mod_detected else None
+    target_conf = min(int(get_key_score(target_key, chroma_avg, bass_global) * 100), 99) if mod_detected else None
 
     modulation_time = None
     target_percentage = 0
