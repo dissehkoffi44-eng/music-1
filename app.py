@@ -241,9 +241,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
         if np.max(np.abs(seg)) < 0.01: continue
         
         # Multi-scale analysis: Chroma avec deux fenêtres (n_fft=4096 et 8192)
-       chroma_short = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
-       chroma_long = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
-       c_raw = np.mean(librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12), axis=1)
+        chroma_short = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
+        chroma_long = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12)
+        c_raw = np.mean(librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=12), axis=1)
         
         # Intègre chroma_pd pour le segment (approx, ajuste si besoin)
         frame_start = int(idx_start / 1024)  # Approx hop=1024
