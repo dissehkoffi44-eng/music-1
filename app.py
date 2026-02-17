@@ -12,7 +12,6 @@ import json  # <--- AJOUTEZ CETTE LIGNE ICI
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
-from pydub import AudioSegment  # Ajout pour la gestion des fichiers m4a
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -134,21 +133,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
     update_prog(10, f"Chargement de {file_name}")
     
-    # Gestion des fichiers m4a intégrée depuis code 2
-    ext = file_name.split('.')[-1].lower()
     file_bytes = audio_file.getvalue()
-    if ext == 'm4a':
-        audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="m4a")
-        samples = np.array(audio.get_array_of_samples()).astype(np.float32)
-        if audio.channels == 2:
-            samples = samples.reshape((-1, 2)).mean(axis=1)
-        y = samples / (2**15)
-        sr = audio.frame_rate
-        if sr != 22050:
-            y = librosa.resample(y, orig_sr=sr, target_sr=22050)
-            sr = 22050
-    else:
-        y, sr = librosa.load(audio_file, sr=22050, mono=True)
+    y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
     
     update_prog(30, "Filtrage des fréquences")
     duration = librosa.get_duration(y=y, sr=sr)
