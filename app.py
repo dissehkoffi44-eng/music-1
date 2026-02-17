@@ -308,9 +308,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
     most_common = votes.most_common(4)
     
     # Vote final sur les 4 meilleurs prétendants basé sur la consonance globale
+    total_votes = sum(votes.values())
     global_scores = {}
-    for key, _ in most_common:
-        global_scores[key] = get_key_score(key, chroma_avg, bass_global)
+    for key, count in most_common:
+        score_global = get_key_score(key, chroma_avg, bass_global)
+        vote_percentage = count / total_votes if total_votes > 0 else 0
+        global_scores[key] = score_global * vote_percentage
     
     final_key = max(global_scores, key=global_scores.get)
     final_conf = int(global_scores[final_key] * 100)
@@ -323,7 +326,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
         best_alt = max(alt_cadences, key=alt_cadences.get)
         if alt_cadences[best_alt] > cadence_score + 1:
             final_key = best_alt
-            final_conf = int(get_key_score(final_key, chroma_avg, bass_global) * 100)
+            score_global_alt = get_key_score(final_key, chroma_avg, bass_global)
+            vote_percentage_alt = votes[final_key] / total_votes if total_votes > 0 else 0
+            final_conf = int(score_global_alt * vote_percentage_alt * 100)
     
     # Bonus de confiance si forte résolution à la fin
     if timeline and timeline[-1]["Note"] == final_key:
