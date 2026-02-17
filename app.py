@@ -353,6 +353,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
     target_key = most_common[1][0] if mod_detected else None
 
+    # Calcul de la confiance pour la modulation (similaire à la confiance principale)
+    target_conf = min(int(global_scores.get(target_key, 0) * 100), 99) if mod_detected else None
+
     modulation_time = None
     target_percentage = 0
     ends_in_target = False
@@ -402,7 +405,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
         "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
         "mod_ends_in_target": ends_in_target if mod_detected else False,
-        "harm_start": seconds_to_mmss(harm_start), "harm_end": seconds_to_mmss(harm_end)
+        "harm_start": seconds_to_mmss(harm_start), "harm_end": seconds_to_mmss(harm_end),
+        "target_conf": target_conf
     }
     
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -502,12 +506,16 @@ if uploaded_files:
             st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
             color = "linear-gradient(135deg, #065f46, #064e3b)" if analysis_data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
             
+            mod_alert = ""
+            if analysis_data['modulation']:
+                mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
+            
             st.markdown(f"""
                 <div class="report-card" style="background:{color};">
                     <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v5.0 <span class="sniper-badge">READY</span></p>
                     <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">{analysis_data['key'].upper()}</h1>
                     <p style="font-size:1.5em; opacity:0.9;">CAMELOT: <b>{analysis_data['camelot']}</b> &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['conf']}%</b></p>
-                    {f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']})</div>" if analysis_data['modulation'] else ""}
+                    {mod_alert}
                 </div>
             """, unsafe_allow_html=True)
             
