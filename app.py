@@ -322,9 +322,14 @@ def get_chord_js(btn_id, key_str):
 st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique 99% précis")
 
+# Ajout d'un placeholder pour le statut global en haut de la page
+global_status = st.empty()
+
 uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
 
 if uploaded_files:
+    global_status.info("Analyse des fichiers en cours...")
+    
     progress_zone = st.container()
     
     for f in reversed(uploaded_files):
@@ -364,6 +369,8 @@ if uploaded_files:
                 st.plotly_chart(fig_radar, use_container_width=True)
             
             st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
+    
+    global_status.success("Tous les fichiers ont été analysés avec succès !")
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
