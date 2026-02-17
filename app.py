@@ -114,16 +114,21 @@ def get_fifths_vector(chroma):
     return np.array([chroma[pc_to_fifths[i]] for i in range(12)])
 
 def find_main_axis(k_vec):  # k_vec = fifths_vector normalisé
-    max_val, best_axis = -np.inf, None
-    for y_idx in range(12):
-        z_idx = (y_idx + 6) % 12
-        left_sum = np.sum(k_vec[(y_idx + 1) % 12 : (y_idx + 6) % 12 + 1 if (y_idx + 6) % 12 < (y_idx + 1) % 12 else (y_idx + 6) % 12])
-        right_sum = np.sum(k_vec[(y_idx + 7) % 12 : (y_idx + 12) % 12 + 1 if (y_idx + 12) % 12 < (y_idx + 7) % 12 else (y_idx + 12) % 12]) + k_vec[z_idx] / 2
+    max_val = -np.inf
+    best_shift = None
+    for shift in range(12):
+        rolled = np.roll(k_vec, -shift)
+        left_sum = np.sum(rolled[1:6])
+        right_sum = np.sum(rolled[7:12]) + rolled[6] / 2
         val = right_sum - left_sum
         if val > max_val:
             max_val = val
-            best_axis = (FIFTHS_ORDER[y_idx], FIFTHS_ORDER[z_idx])
-    return best_axis
+            best_shift = shift
+    if best_shift is not None:
+        y_idx = best_shift
+        z_idx = (best_shift + 6) % 12
+        return (FIFTHS_ORDER[y_idx], FIFTHS_ORDER[z_idx])
+    return None
 
 def solve_key_sniper(chroma_vector, bass_vector):
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
@@ -150,7 +155,7 @@ def solve_key_sniper(chroma_vector, bass_vector):
         scores = []
         for p_name, p_data in PROFILES.items():
             profile = p_data[mode]
-            shifted_profile = np.roll(profile, -i)  # Shift pour aligner à la root
+            shifted_profile = np.roll(profile, i)  # Correction: roll(i) pour aligner correctement
             score = np.corrcoef(cv, shifted_profile)[0, 1]
             
             # LOGIQUE DE CADENCE PARFAITE
@@ -217,19 +222,28 @@ def process_audio(audio_file, file_name, progress_placeholder):
     for frame in range(S.shape[1]):
         peaks, _ = find_peaks(S[:, frame], height=0.1 * np.max(S[:, frame]))  # Seuil adaptatif
         for p in peaks:
-            midi_note = librosa.hz_to_midi(freqs[p])
+            freq = freqs[p]
+            if freq <= 0:
+                continue
+            midi_note = librosa.hz_to_midi(freq)
+            if np.isnan(midi_note):
+                continue
             pc = int(midi_note % 12)
             chroma_pd[pc, frame] += S[p, frame]  # Ajoute amplitude du pic
 
     # Low Frequency Clarification: Pour basses (<220 Hz), supprime pics ambigus
     low_freq_mask = freqs < 220
     for frame in range(S.shape[1]):
-        low_peaks = peaks[np.where(low_freq_mask[peaks])[0]] if np.any(low_freq_mask[peaks]) else []
+        low_indices = np.where(low_freq_mask[peaks])[0] if len(peaks) > 0 else []
+        low_peaks = peaks[low_indices] if len(low_indices) > 0 else []
         if len(low_peaks) > 0:
             strongest = np.argmax(S[low_peaks, frame])
-            for idx in range(len(low_peaks)):
-                if idx != strongest and abs(freqs[low_peaks[idx]] - freqs[low_peaks[strongest]]) < 10:  # Proche en Hz
-                    chroma_pd[:, frame] *= 0.5  # Réduit poids
+            has_ambiguous = any(
+                idx != strongest and abs(freqs[low_peaks[idx]] - freqs[low_peaks[strongest]]) < 10
+                for idx in range(len(low_peaks))
+            )
+            if has_ambiguous:
+                chroma_pd[:, frame] *= 0.5  # Réduit poids une seule fois si ambigu
 
     update_prog(50, "Analyse du spectre harmonique")
     step, timeline, votes = 6, [], Counter()
@@ -246,10 +260,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
         c_raw = (np.mean(chroma_short, axis=1) + np.mean(chroma_long, axis=1)) / 2  # Fusion
         
         # Intègre chroma_pd pour le segment (approx, ajuste si besoin)
-        frame_start = int(idx_start / 1024)  # Approx hop=1024
-        frame_end = int(idx_end / 1024)
-        c_avg = np.mean(chroma_pd[:, max(0, frame_start):min(chroma_pd.shape[1], frame_end)], axis=1)
-        c_avg = (c_avg + np.mean(c_raw, axis=0)) / 2  # Fusionne avec chroma_cqt
+        hop_length = 512  # Default pour stft
+        frame_start = max(0, int(idx_start / hop_length))
+        frame_end = min(chroma_pd.shape[1], int(idx_end / hop_length) + 1)
+        c_avg = np.mean(chroma_pd[:, frame_start:frame_end], axis=1)
+        c_avg = (c_avg + c_raw) / 2  # Fusionne avec c_raw (correction: sans np.mean(axis=0))
         
         # Lissage gaussien
         c_avg_smoothed = gaussian_filter1d(c_avg, sigma=1.5)
@@ -287,7 +302,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             dist = pdist(target_times.reshape(-1,1), 'euclidean')
             Z = linkage(target_times.reshape(-1,1), method='single')
             clust = fcluster(Z, t=5, criterion='distance')  # Clusters si <5s apart
-            max_cluster_size = max(Counter(clust).values()) * 1  # Taille en secondes approx (ajusté pour incrément 1s)
+            max_cluster_size = max(Counter(clust).values())  # Taille en nombre de points (~secondes avec inc=1s)
             if max_cluster_size < 10:  # Seuil minimal pour vraie modulation
                 mod_detected = False  # Ignore si pas continu
         if mod_detected:
