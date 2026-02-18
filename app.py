@@ -325,9 +325,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
     total_votes = sum(votes.values())
 
     # Sélection de la tonalité principale basée sur la meilleure consonance globale sur toute la durée
-    res_global = solve_key_sniper(chroma_avg, bass_global)
-    final_key = res_global['key']
-    final_conf = int(res_global['score'] * 100)
+    final_key = most_common[0][0]
+    final_conf = int(get_key_score(final_key, chroma_avg, bass_global) * 100)  # Or average of timeline["Conf"] for that key
     
     # Validation supplémentaire via détection de cadences et résolution
     cadence_score = detect_cadence_resolution(timeline, final_key)
