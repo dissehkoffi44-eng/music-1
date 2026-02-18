@@ -313,7 +313,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         res = solve_key_sniper(c_avg, b_seg)
         
         # Augmentation du poids pour segments finaux (résolution vers tonique)
-        weight = 4.0 if start > (duration_harm - 15) else 3.0 if start < 10 else 1.0  # Plus de poids à la fin pour "sentiment d'achèvement"
+        weight = 3.0 if start > (duration_harm - 15) else 2.0 if start < 10 else 1.0  # Plus de poids à la fin pour "sentiment d'achèvement"
         votes[res['key']] += int(res['score'] * 100 * weight)
         timeline.append({"Temps": harm_start + start, "Note": res['key'], "Conf": res['score']})  # Ajuster temps absolu
         
