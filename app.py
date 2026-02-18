@@ -343,6 +343,13 @@ def process_audio(audio_file, file_name, progress_placeholder):
     if timeline and timeline[-1]["Note"] == final_key:
         final_conf = min(final_conf + 5, 99)  # Bonus pour fin sur la tonique
     
+    # Calcul de la tonalité dominante (la plus fréquente dans les votes)
+    dominant_key = most_common[0][0] if most_common else "Unknown"
+    dominant_votes = most_common[0][1] if most_common else 0
+    dominant_percentage = (dominant_votes / total_votes * 100) if total_votes > 0 else 0
+    dominant_conf = int(get_key_score(dominant_key, chroma_avg, bass_global) * 100) if dominant_key != "Unknown" else 0
+    dominant_camelot = CAMELOT_MAP.get(dominant_key, "??")
+    
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
     target_key = most_common[1][0] if mod_detected else None
 
@@ -399,7 +406,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
         "mod_ends_in_target": ends_in_target if mod_detected else False,
         "harm_start": seconds_to_mmss(harm_start), "harm_end": seconds_to_mmss(harm_end),
-        "target_conf": target_conf
+        "target_conf": target_conf,
+        "dominant_key": dominant_key, "dominant_camelot": dominant_camelot,
+        "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1)
     }
     
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -412,13 +421,16 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 end_txt = " → **fin en " + target_key.upper() + " (" + res_obj['target_camelot'] + ")**" if res_obj['mod_ends_in_target'] else ""
                 mod_line = f"\n⚠️ *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
             
+            # Ajout de la tonalité dominante au caption
+            dom_line = f"\n🏆 *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})` | *POURCENTAGE:* `{res_obj['dominant_percentage']}%` | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
+            
             caption = (
                 f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📂 *FICHIER:* `{file_name}`\n"
-                f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
-                f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
-                f"🔥 *CONFIANCE:* `{res_obj['conf']}%`{mod_line}\n"
+                f"🎹 *TONALITÉ MEILLEURE CONSONANCE:* `{final_key.upper()}` ({res_obj['camelot']}) | *CONFIANCE:* `{res_obj['conf']}%`\n"
+                + dom_line +
+                f"{mod_line}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
                 f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
@@ -503,11 +515,14 @@ if uploaded_files:
             if analysis_data['modulation']:
                 mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
             
+            # Affichage des deux tonalités côte à côte
             st.markdown(f"""
                 <div class="report-card" style="background:{color};">
                     <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v5.0 <span class="sniper-badge">READY</span></p>
-                    <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">{analysis_data['key'].upper()}</h1>
-                    <p style="font-size:1.5em; opacity:0.9;">CAMELOT: <b>{analysis_data['camelot']}</b> &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['conf']}%</b></p>
+                    <h1 style="font-size:3em; margin:10px 0; font-weight:900;">
+                        BEST CONSONANCE: {analysis_data['key'].upper()} ({analysis_data['camelot']}) {analysis_data['conf']}% 
+                        | DOMINANT: {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) {analysis_data['dominant_percentage']}%
+                    </h1>
                     {mod_alert}
                 </div>
             """, unsafe_allow_html=True)
