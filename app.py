@@ -455,6 +455,10 @@ def process_audio(audio_file, file_name, progress_placeholder):
         status_text.empty()
         progress_bar.empty()
 
+        # Pré-calcul : la modulation est-elle trop tardive pour être la tonalité principale ?
+        # "Trop tard" = apparaît dans les derniers 30s du morceau seulement
+        mod_is_too_late = (modulation_time is not None) and (modulation_time > duration - 30)
+
         # ══════════════════════════════════════════════════════════════════════════
         # --- MOTEUR DE DÉCISION SNIPER V8.0 (HIÉRARCHIE DJ PRO) ---
         # ══════════════════════════════════════════════════════════════════════════
@@ -462,31 +466,39 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # ÉTAPE 0 : On prépare l'arbitrage entre les deux meilleures détections
         decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
 
-        # 1️⃣ PRIORITÉ HAUTE : ARBITRAGE HARMONIQUE (Voisins Camelot)
+        # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Voisins Camelot)
+        # On vérifie d'abord s'il y a un doute entre deux voisins (ex: 7A vs 8A)
         if decision_pivot:
             confiance_pure_key = decision_pivot
             avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot validé)"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
 
-        # 2️⃣ PRIORITÉ 2 : MODULATION DE RÉSOLUTION (Fin de morceau)
-        elif mod_detected and ends_in_target and target_percentage >= 25.0:
+        # 2️⃣ NOUVELLE PRIORITÉ : VALIDATION DIRECTE (Accord Parfait)
+        # Si Consonance == Dominante et confiance > 85%
+        elif final_key == dominant_key and dominant_conf >= 85:
+            confiance_pure_key = final_key
+            avis_expert = f"💎 ACCORD PARFAIT ({round(dominant_conf, 1)}%)"
+            color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)" # Vert Émeraude
+
+        # 3️⃣ PRIORITÉ 3 : MODULATION ÉCLAIR (< 30s)
+        elif mod_detected and ends_in_target and target_percentage >= 25.0 and not mod_is_too_late:
             confiance_pure_key = target_key
-            avis_expert = f"🏁 RÉSOLUTION FINALE ({round(target_percentage, 1)}%)"
+            avis_expert = f"🏁 MODULATION ÉCLAIR (@ {seconds_to_mmss(modulation_time)})"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Rouge/Violet
 
-        # 3️⃣ PRIORITÉ 3 : DOMINANTE CERTIFIÉE (Structure forte)
+        # 4️⃣ PRIORITÉ 4 : DOMINANTE CERTIFIÉE (> 35% Présence)
         elif dominant_percentage >= 35.0 and dominant_conf >= 85:
             confiance_pure_key = dominant_key
             avis_expert = f"🏆 DOMINANTE CERTIFIÉE ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)" # Bleu Royal
 
-        # 4️⃣ PRIORITÉ 4 : VERROU DE CONFIANCE (Sécurité par défaut)
+        # 5️⃣ PRIORITÉ 5 : VERROU DE CONFIANCE (Sécurité par défaut)
         elif final_conf >= 99:
             confiance_pure_key = final_key
             avis_expert = "🔒 VERROU DE CONFIANCE (99%)"
             color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)" # Vert Sombre
 
-        # 5️⃣ FALLBACK : ANALYSE STABLE
+        # 6️⃣ FALLBACK : ANALYSE STABLE
         else:
             confiance_pure_key = final_key
             avis_expert = "✅ ANALYSE STABLE"
