@@ -98,59 +98,62 @@ st.markdown("""
 
 def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
     """
-    Arbitrage intelligent basé sur l'exclusion des tonalités incompatibles avec les notes pivots.
-    Utilise le signal traité (chroma_global) pour éliminer une tonalité si une note interdite est présente.
+    Arbitrage universel pour TOUS les voisins de la roue Camelot.
+    Couvre les 24 duels mineurs (A) et majeurs (B) via la logique des pivots musicaux (quintes).
+    La note pivot est celle qui appartient à l'une des tonalités mais est interdite dans l'autre.
     """
-    if not key_to_camelot_map.get(key_a) or not key_to_camelot_map.get(key_b):
-        return None
-
+    # 1. Extraction des notes les plus fortes du signal traité
     top_notes_indices = np.argsort(chroma_global)[-5:]
     top_notes = [NOTES_LIST[i] for i in top_notes_indices]
 
-    set_keys = {key_a, key_b}
+    # 2. Dictionnaire exhaustif des pivots de transition (Quintes)
+    # Chaque entrée associe une note pivot à la tonalité Camelot qu'elle désigne comme gagnante.
+    pivots = {
+        # --- MINEURS (A) ---
+        '1A_vs_2A':   {'A': '1A', 'A#': '2A'},
+        '2A_vs_3A':   {'E': '2A', 'F': '3A'},
+        '3A_vs_4A':   {'B': '3A', 'C': '4A'},
+        '4A_vs_5A':   {'F#': '4A', 'G': '5A'},
+        '5A_vs_6A':   {'C#': '5A', 'D': '6A'},
+        '6A_vs_7A':   {'G#': '6A', 'A': '7A'},
+        '7A_vs_8A':   {'D#': '7A', 'E': '8A'},  # <-- CAS SUNGBA (Dm vs Am)
+        '8A_vs_9A':   {'A#': '8A', 'B': '9A'},
+        '9A_vs_10A':  {'F': '9A', 'F#': '10A'},
+        '10A_vs_11A': {'C': '10A', 'C#': '11A'},
+        '11A_vs_12A': {'G': '11A', 'G#': '12A'},
+        '12A_vs_1A':  {'D': '12A', 'D#': '1A'},
+        # --- MAJEURS (B) ---
+        '1B_vs_2B':   {'E': '1B', 'F#': '2B'},
+        '2B_vs_3B':   {'B': '2B', 'C#': '3B'},
+        '3B_vs_4B':   {'F': '3B', 'G#': '4B'},
+        '4B_vs_5B':   {'C#': '4B', 'D#': '5B'},
+        '5B_vs_6B':   {'G#': '5B', 'A#': '6B'},
+        '6B_vs_7B':   {'D#': '6B', 'F': '7B'},
+        '7B_vs_8B':   {'A#': '7B', 'C': '8B'},
+        '8B_vs_9B':   {'E': '8B', 'G': '9B'},
+        '9B_vs_10B':  {'B': '9B', 'D': '10B'},
+        '10B_vs_11B': {'F#': '10B', 'A': '11B'},
+        '11B_vs_12B': {'C#': '11B', 'E': '12B'},
+        '12B_vs_1B':  {'G#': '12B', 'B': '1B'},
+    }
 
-    # Cas pour les mineurs (A)
-    if set_keys == {"G# minor", "D# minor"}:
-        if "A" in top_notes: return "G# minor"
-        if "A#" in top_notes: return "D# minor"
-    elif set_keys == {"D# minor", "A# minor"}:
-        if "E" in top_notes: return "D# minor"
-        if "F" in top_notes: return "A# minor"
-    elif set_keys == {"A minor", "E minor"}:
-        if "F" in top_notes: return "A minor"
-        if "F#" in top_notes: return "E minor"
-    elif set_keys == {"E minor", "B minor"}:
-        if "C" in top_notes: return "E minor"
-        if "C#" in top_notes: return "B minor"
-    elif set_keys == {"B minor", "F# minor"}:
-        if "G" in top_notes: return "B minor"
-        if "G#" in top_notes: return "F# minor"
-    elif set_keys == {"F# minor", "C# minor"}:
-        if "D" in top_notes: return "F# minor"
-        if "D#" in top_notes: return "C# minor"
-    elif set_keys == {"C# minor", "G# minor"}:
-        if "A" in top_notes: return "C# minor"
-        if "A#" in top_notes: return "G# minor"
+    cam_a = key_to_camelot_map.get(key_a)
+    cam_b = key_to_camelot_map.get(key_b)
 
-    # Cas pour les majeurs (B)
-    elif set_keys == {"G# major", "D# major"}:
-        if "C#" in top_notes and "A#" in top_notes: return "G# major"
-        if "D" in top_notes: return "D# major"
-    elif set_keys == {"D# major", "A# major"}:
-        if "G#" in top_notes: return "D# major"
-        if "A" in top_notes: return "A# major"
-    elif set_keys == {"C major", "G major"}:
-        if "F" in top_notes: return "C major"
-        if "F#" in top_notes: return "G major"
-    elif set_keys == {"G major", "D major"}:
-        if "C" in top_notes: return "G major"
-        if "C#" in top_notes: return "D major"
-    elif set_keys == {"D major", "A major"}:
-        if "G" in top_notes: return "D major"
-        if "G#" in top_notes: return "A major"
-    elif set_keys == {"A major", "E major"}:
-        if "D" in top_notes: return "A major"
-        if "D#" in top_notes: return "E major"
+    if not cam_a or not cam_b:
+        return None
+
+    pair     = f"{cam_a}_vs_{cam_b}"
+    pair_rev = f"{cam_b}_vs_{cam_a}"
+    duel = pivots.get(pair) or pivots.get(pair_rev)
+
+    if duel:
+        for note_p, winner_camelot in duel.items():
+            if note_p in top_notes:
+                # Retourne le nom complet de la tonalité gagnante (ex: "D minor")
+                for long_name, cam_code in key_to_camelot_map.items():
+                    if cam_code == winner_camelot:
+                        return long_name
 
     return None
 
