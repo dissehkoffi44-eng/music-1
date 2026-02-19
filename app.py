@@ -449,43 +449,44 @@ def process_audio(audio_file, file_name, progress_placeholder):
     status_text.empty()
     progress_bar.empty()
 
-    # --- MOTEUR DE DÉCISION SNIPER V7.5 ---
+    # --- MOTEUR DE DÉCISION SNIPER V7.6 (Correction Asiwaju) ---
 
-    # A. On tente l'arbitrage harmonique PRIORITAIRE (sur signal traité)
-    # Cette fonction ne renverra quelque chose QUE si final_key et dominant_key sont voisins
-    decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
-
-    if decision_pivot:
-        confiance_pure_key = decision_pivot
-        avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
-        color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
-
-    # B. Sinon, on applique tes règles habituelles (Verrou, Présence, Cadence)
-    elif final_conf >= 99 and dominant_percentage < 85:
+    # 1. RÈGLE D'OR : LE VERROU 99% (Priorité absolue pour protéger le 4B)
+    if final_conf >= 99 and dominant_percentage < 95:
         confiance_pure_key = final_key
         avis_expert = "💎 ANALYSE INDISCUTABLE (99%)"
         color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
-    elif dominant_percentage > 50.0 and dominant_conf >= 75:
-        confiance_pure_key = dominant_key
-        avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
-        color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
-
-    elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
-        if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
-            confiance_pure_key = dominant_key
-            avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
-            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
-        else:
-            confiance_pure_key = final_key
-            avis_expert = "✅ CONSONANCE GLOBALE"
-            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
-
+    # 2. ARBITRAGE HARMONIQUE (Seulement si le doute est réel)
     else:
-        # Par défaut on garde la consonance
-        confiance_pure_key = final_key
-        avis_expert = "✅ ANALYSE STABLE"
-        color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+        decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
+        
+        if decision_pivot:
+            confiance_pure_key = decision_pivot
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"
+        
+        # ... reste des règles (Palier 50%, Cadence)
+        elif dominant_percentage > 50.0 and dominant_conf >= 75:
+            confiance_pure_key = dominant_key
+            avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
+            color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
+
+        elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
+            if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
+                confiance_pure_key = dominant_key
+                avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
+                color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
+            else:
+                confiance_pure_key = final_key
+                avis_expert = "✅ CONSONANCE GLOBALE"
+                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+
+        else:
+            # Par défaut on garde la consonance
+            confiance_pure_key = final_key
+            avis_expert = "✅ ANALYSE STABLE"
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
