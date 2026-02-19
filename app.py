@@ -709,7 +709,7 @@ if uploaded_files:
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
                         <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
-                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['key_presence']}% | CONFIANCE {analysis_data['conf']}%
+                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data.get('key_presence', analysis_data.get('dominant_percentage', 0))}% | CONFIANCE {analysis_data['conf']}%
                             &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['dominant_conf']}%
                         </p>
                         {mod_alert}
