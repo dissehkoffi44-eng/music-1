@@ -87,54 +87,101 @@ st.markdown("""
 
 def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
     """
-    Arbitrage intelligent basé sur les notes pivots pour départager les voisins.
-    Utilise le signal traité (chroma_global).
+    Arbitrage intelligent basé sur l'exclusion des tonalités incompatibles avec les notes pivots.
+    Utilise le signal traité (chroma_global) pour éliminer une tonalité si une note interdite est présente.
     """
-    # 1. Signatures complètes de la Roue Camelot
-    signatures = {
-        # --- MINEURS (A) ---
-        '1A_vs_2A':  {'A#': '2A', 'A': '1A'},   # G#m vs D#m
-        '2A_vs_3A':  {'F':  '3A', 'E': '2A'},   # D#m vs A#m
-        '8A_vs_9A':  {'F#': '9A', 'F': '8A'},   # Am vs Em
-        '9A_vs_10A': {'C#': '10A', 'C': '9A'},  # Em vs Bm
-        '10A_vs_11A': {'G#': '11A', 'G': '10A'}, # Bm vs F#m (F# MINOR = 11A)
-        '11A_vs_12A': {'D#': '12A', 'D': '11A'}, # F#m vs C#m
-        '12A_vs_1A':  {'A#': '1A', 'A': '12A'},  # C#m vs G#m
-
-        # --- MAJEURS (B) ---
-        '4B_vs_5B':  {'D':  '5B', 'C#': '4B'},  # Ab vs Eb
-        '5B_vs_6B':  {'A':  '6B', 'G#': '5B'},  # Eb vs Bb
-        '8B_vs_9B':  {'F#': '9B', 'F':  '8B'},  # C vs G
-        '9B_vs_10B': {'C#': '10B', 'C': '9B'},  # G vs D
-        '10B_vs_11B': {'G#': '11B', 'G': '10B'}, # D vs A
-        '11B_vs_12B': {'D#': '12B', 'D': '11B'}, # A vs E
-    }
-
-    # 2. Conversion des clés d'entrée en format Camelot (ex: '4B')
-    cam_a = key_to_camelot_map.get(key_a)
-    cam_b = key_to_camelot_map.get(key_b)
-    
-    if not cam_a or not cam_b:
+    if not key_to_camelot_map.get(key_a) or not key_to_camelot_map.get(key_b):
         return None
 
-    # 3. Identification du duel
-    pair = f"{cam_a}_vs_{cam_b}"
-    pair_rev = f"{cam_b}_vs_{cam_a}"
-    duel = signatures.get(pair) or signatures.get(pair_rev)
+    top_notes_indices = np.argsort(chroma_global)[-5:]
+    top_notes = [NOTES_LIST[i] for i in top_notes_indices]
 
-    # 4. Analyse du signal traité si un duel est identifié
-    if duel:
-        # On extrait les 5 notes les plus fortes du signal traité
-        top_notes_indices = np.argsort(chroma_global)[-5:]
-        top_notes = [NOTES_LIST[i] for i in np.argsort(chroma_global)[-5:]]
-        
-        for note_p, winner_camelot in duel.items():
-            if note_p in top_notes:
-                # On renvoie le nom long correspondant au gagnant (ex: 'G# major')
-                for long_name, cam_code in key_to_camelot_map.items():
-                    if cam_code == winner_camelot:
-                        return long_name
-    
+    set_keys = {key_a, key_b}
+
+    # Cas pour les mineurs (A)
+    if set_keys == {"G# minor", "D# minor"}:  # 1A vs 2A
+        if "A" in top_notes:
+            return "G# minor"  # A élimine D# minor (interdit en 2A)
+        if "A#" in top_notes:
+            return "D# minor"  # A# élimine G# minor (interdit en 1A)
+
+    elif set_keys == {"D# minor", "A# minor"}:  # 2A vs 3A
+        if "E" in top_notes:
+            return "D# minor"  # E élimine A# minor (interdit en 3A)
+        if "F" in top_notes:
+            return "A# minor"  # F élimine D# minor (interdit en 2A)
+
+    elif set_keys == {"A minor", "E minor"}:  # 8A vs 9A
+        if "F" in top_notes:
+            return "A minor"  # F élimine E minor (interdit en 9A)
+        if "F#" in top_notes:
+            return "E minor"  # F# élimine A minor (interdit en 8A)
+
+    elif set_keys == {"E minor", "B minor"}:  # 9A vs 10A
+        if "C" in top_notes:
+            return "E minor"  # C élimine B minor (interdit en 10A)
+        if "C#" in top_notes:
+            return "B minor"  # C# élimine E minor (interdit en 9A)
+
+    elif set_keys == {"B minor", "F# minor"}:  # 10A vs 11A (cas spécial comme dans l'exemple)
+        # Le G naturel est interdit en 11A, il élimine F# minor
+        if "G" in top_notes:
+            return "B minor"
+        # Inverse pour complétude : G# interdit en 10A, élimine B minor
+        if "G#" in top_notes:
+            return "F# minor"
+
+    elif set_keys == {"F# minor", "C# minor"}:  # 11A vs 12A
+        if "D" in top_notes:
+            return "F# minor"  # D élimine C# minor (interdit en 12A)
+        if "D#" in top_notes:
+            return "C# minor"  # D# élimine F# minor (interdit en 11A)
+
+    elif set_keys == {"C# minor", "G# minor"}:  # 12A vs 1A
+        if "A" in top_notes:
+            return "C# minor"  # A élimine G# minor (interdit en 1A)
+        if "A#" in top_notes:
+            return "G# minor"  # A# élimine C# minor (interdit en 12A)
+
+    # Cas pour les majeurs (B)
+    elif set_keys == {"G# major", "D# major"}:  # 4B vs 5B (cas spécial comme dans l'exemple)
+        # Si on hésite entre 4B et 5B, le C# (Db) est interdit en 5B, mais confirmé par A# pour preuve de A# minor
+        if "C#" in top_notes and "A#" in top_notes:
+            return "G# major"  # Élimine D# major car C# interdit en 5B
+        # Inverse pour complétude : D interdit en 4B, élimine G# major
+        if "D" in top_notes:
+            return "D# major"
+
+    elif set_keys == {"D# major", "A# major"}:  # 5B vs 6B
+        if "G#" in top_notes:
+            return "D# major"  # G# élimine A# major (interdit en 6B)
+        if "A" in top_notes:
+            return "A# major"  # A élimine D# major (interdit en 5B)
+
+    elif set_keys == {"C major", "G major"}:  # 8B vs 9B
+        if "F" in top_notes:
+            return "C major"  # F élimine G major (interdit en 9B)
+        if "F#" in top_notes:
+            return "G major"  # F# élimine C major (interdit en 8B)
+
+    elif set_keys == {"G major", "D major"}:  # 9B vs 10B
+        if "C" in top_notes:
+            return "G major"  # C élimine D major (interdit en 10B)
+        if "C#" in top_notes:
+            return "D major"  # C# élimine G major (interdit en 9B)
+
+    elif set_keys == {"D major", "A major"}:  # 10B vs 11B
+        if "G" in top_notes:
+            return "D major"  # G élimine A major (interdit en 11B)
+        if "G#" in top_notes:
+            return "A major"  # G# élimine D major (interdit en 10B)
+
+    elif set_keys == {"A major", "E major"}:  # 11B vs 12B
+        if "D" in top_notes:
+            return "A major"  # D élimine E major (interdit en 12B)
+        if "D#" in top_notes:
+            return "E major"  # D# élimine A major (interdit en 11B)
+
     return None
 
 def seconds_to_mmss(seconds):
