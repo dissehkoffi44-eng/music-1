@@ -657,123 +657,93 @@ if 'analyses' not in st.session_state:
     st.session_state.analyses = {}
 if 'analyzing' not in st.session_state:
     st.session_state.analyzing = False
-# file_bytes_cache : stocke les bytes de chaque fichier uploadé dès qu'il apparaît,
-# car après un rerun Streamlit les objets UploadedFile peuvent être vidés.
-if 'file_bytes_cache' not in st.session_state:
-    st.session_state.file_bytes_cache = {}
-# file_order : conserve l'ordre d'arrivée des fichiers pour un affichage stable.
-if 'file_order' not in st.session_state:
-    st.session_state.file_order = []
 
 if uploaded_files:
-    # ── ÉTAPE 1 : Mise en cache immédiate des bytes de tous les fichiers uploadés ──
-    # Doit se faire AVANT toute analyse, car après un rerun les bytes peuvent être perdus.
-    for f in uploaded_files:
-        if f.name not in st.session_state.file_bytes_cache:
-            st.session_state.file_bytes_cache[f.name] = f.getvalue()
-        if f.name not in st.session_state.file_order:
-            st.session_state.file_order.append(f.name)
+    global_status.info("Analyse des fichiers en cours...")
+    progress_zone = st.container()
 
-    # ── ÉTAPE 2 : Identifier uniquement les nouveaux fichiers à analyser ──
-    new_files = [f for f in uploaded_files if f.name not in st.session_state.analyses]
+    for i, f in enumerate(reversed(uploaded_files)):
+        file_name = f.name
 
-    if new_files:
-        global_status.info(f"Analyse de {len(new_files)} nouveau(x) fichier(s) en cours...")
-        progress_zone = st.container()
-
-        for f in new_files:
-            file_name = f.name
-            # Reconstruction d'un objet BytesIO depuis le cache — résistant aux reruns
-            cached_bytes = st.session_state.file_bytes_cache[file_name]
-            file_like = io.BytesIO(cached_bytes)
-            file_like.name = file_name
-
-            analysis_data = process_audio(file_like, file_name, progress_zone)
+        if file_name not in st.session_state.analyses:
+            st.session_state.analyzing = True
+            analysis_data = process_audio(f, file_name, progress_zone)
             st.session_state.analyses[file_name] = analysis_data
-
-            # Limite à 5 fichiers max en session_state (supprime le plus ancien)
             if len(st.session_state.analyses) > 5:
                 oldest_file = next(iter(st.session_state.analyses))
                 if 'temp_dir' in st.session_state.analyses[oldest_file] and os.path.exists(st.session_state.analyses[oldest_file]['temp_dir']):
                     shutil.rmtree(st.session_state.analyses[oldest_file]['temp_dir'])
                 del st.session_state.analyses[oldest_file]
-                if oldest_file in st.session_state.file_bytes_cache:
-                    del st.session_state.file_bytes_cache[oldest_file]
-                if oldest_file in st.session_state.file_order:
-                    st.session_state.file_order.remove(oldest_file)
 
-        global_status.success("Tous les fichiers ont été analysés avec succès !")
-    else:
-        global_status.success(f"{len(st.session_state.analyses)} fichier(s) analysé(s) — prêt.")
+        if file_name in st.session_state.analyses:
+            analysis_data = st.session_state.analyses[file_name]
 
-    # ── ÉTAPE 3 : Affichage de tous les fichiers dans l'ordre d'arrivée ──
-    for i, file_name in enumerate(st.session_state.file_order):
-        if file_name not in st.session_state.analyses:
-            continue
-        analysis_data = st.session_state.analyses[file_name]
+            with open(analysis_data['timeline_path'], 'rb') as tf:
+                timeline = pickle.load(tf)
+            chroma = np.load(analysis_data['chroma_path'])
 
-        with open(analysis_data['timeline_path'], 'rb') as tf:
-            timeline = pickle.load(tf)
-        chroma = np.load(analysis_data['chroma_path'])
+            with st.container():
+                st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
 
-        with st.container():
-            st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
+                mod_alert = ""
+                if analysis_data['modulation']:
+                    ends_badge = " &nbsp; 🏁 <b>FIN SUR MODULATION</b>" if analysis_data['mod_ends_in_target'] else ""
+                    mod_alert = (
+                        f"<div class='modulation-alert'>"
+                        f"⚠️ MODULATION : <b>{analysis_data['target_key'].upper()}</b> ({analysis_data['target_camelot']})"
+                        f" &nbsp;|&nbsp; PRÉSENCE : <b>{analysis_data['mod_target_percentage']}%</b>"
+                        f" &nbsp;|&nbsp; CONFIANCE : <b>{analysis_data['target_conf']}%</b>"
+                        f"{ends_badge}"
+                        f"</div>"
+                    )
 
-            mod_alert = ""
-            if analysis_data['modulation']:
-                ends_badge = " &nbsp; 🏁 <b>FIN SUR MODULATION</b>" if analysis_data['mod_ends_in_target'] else ""
-                mod_alert = (
-                    f"<div class='modulation-alert'>"
-                    f"⚠️ MODULATION : <b>{analysis_data['target_key'].upper()}</b> ({analysis_data['target_camelot']})"
-                    f" &nbsp;|&nbsp; PRÉSENCE : <b>{analysis_data['mod_target_percentage']}%</b>"
-                    f" &nbsp;|&nbsp; CONFIANCE : <b>{analysis_data['target_conf']}%</b>"
-                    f"{ends_badge}"
-                    f"</div>"
-                )
+                st.markdown(f"""
+                    <div class="report-card" style="background:{analysis_data['color_bandeau']};">
+                        <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
+                            SNIPER ENGINE v5.0 | {analysis_data['avis_expert']}
+                        </p>
+                        <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
+                            {analysis_data['pure_camelot']}
+                        </h1>
+                        <p style="font-size:2em; font-weight:bold; margin-top:-10px; margin-bottom:20px; opacity:0.9; text-align: center;">
+                            {analysis_data['confiance_pure'].upper()}
+                        </p>
+                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
+                        <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
+                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['conf']}%
+                            &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['dominant_conf']}%
+                        </p>
+                        {mod_alert}
+                    </div>
+                """, unsafe_allow_html=True)
 
-            st.markdown(f"""
-                <div class="report-card" style="background:{analysis_data['color_bandeau']};">
-                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                        SNIPER ENGINE v5.0 | {analysis_data['avis_expert']}
-                    </p>
-                    <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
-                        {analysis_data['pure_camelot']}
-                    </h1>
-                    <p style="font-size:2em; font-weight:bold; margin-top:-10px; margin-bottom:20px; opacity:0.9; text-align: center;">
-                        {analysis_data['confiance_pure'].upper()}
-                    </p>
-                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
-                    <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
-                        DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['conf']}%
-                        &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['dominant_conf']}%
-                    </p>
-                    {mod_alert}
-                </div>
-            """, unsafe_allow_html=True)
+                m2, m3 = st.columns(2)
+                with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
+                with m3:
+                    btn_id = f"play_{hash(analysis_data['name'])}"
+                    components.html(f"""
+                        <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
+                        <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
+                    """, height=110)
 
-            m2, m3 = st.columns(2)
-            with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
-            with m3:
-                btn_id = f"play_{hash(analysis_data['name'])}"
-                components.html(f"""
-                    <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
-                    <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
-                """, height=110)
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    fig_tl = px.line(pd.DataFrame(timeline), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
+                    fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
+                with c2:
+                    fig_radar = go.Figure(data=go.Scatterpolar(r=chroma, theta=NOTES_LIST, fill='toself', line_color='#10b981'))
+                    fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{analysis_data['name']}_{i}")
 
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                fig_tl = px.line(pd.DataFrame(timeline), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-                fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
-            with c2:
-                fig_radar = go.Figure(data=go.Scatterpolar(r=chroma, theta=NOTES_LIST, fill='toself', line_color='#10b981'))
-                fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{analysis_data['name']}_{i}")
+                st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
 
-            st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
+            del timeline, chroma
+            gc.collect()
 
-        del timeline, chroma
-        gc.collect()
+    st.session_state.analyzing = False
+    global_status.success("Tous les fichiers ont été analysés avec succès !")
+    gc.collect()
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
@@ -784,7 +754,5 @@ with st.sidebar:
                 shutil.rmtree(data['temp_dir'])
         st.session_state.analyses = {}
         st.session_state.analyzing = False
-        st.session_state.file_bytes_cache = {}
-        st.session_state.file_order = []
         gc.collect()
         st.rerun()
