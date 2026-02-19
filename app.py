@@ -85,6 +85,58 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
+def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
+    """
+    Arbitrage intelligent basé sur les notes pivots pour départager les voisins.
+    Utilise le signal traité (chroma_global).
+    """
+    # 1. Signatures complètes de la Roue Camelot
+    signatures = {
+        # --- MINEURS (A) ---
+        '1A_vs_2A':  {'A#': '2A', 'A': '1A'},   # G#m vs D#m
+        '2A_vs_3A':  {'F':  '3A', 'E': '2A'},   # D#m vs A#m
+        '8A_vs_9A':  {'F#': '9A', 'F': '8A'},   # Am vs Em
+        '9A_vs_10A': {'C#': '10A', 'C': '9A'},  # Em vs Bm
+        '10A_vs_11A': {'G#': '11A', 'G': '10A'}, # Bm vs F#m (F# MINOR = 11A)
+        '11A_vs_12A': {'D#': '12A', 'D': '11A'}, # F#m vs C#m
+        '12A_vs_1A':  {'A#': '1A', 'A': '12A'},  # C#m vs G#m
+
+        # --- MAJEURS (B) ---
+        '4B_vs_5B':  {'D':  '5B', 'C#': '4B'},  # Ab vs Eb
+        '5B_vs_6B':  {'A':  '6B', 'G#': '5B'},  # Eb vs Bb
+        '8B_vs_9B':  {'F#': '9B', 'F':  '8B'},  # C vs G
+        '9B_vs_10B': {'C#': '10B', 'C': '9B'},  # G vs D
+        '10B_vs_11B': {'G#': '11B', 'G': '10B'}, # D vs A
+        '11B_vs_12B': {'D#': '12B', 'D': '11B'}, # A vs E
+    }
+
+    # 2. Conversion des clés d'entrée en format Camelot (ex: '4B')
+    cam_a = key_to_camelot_map.get(key_a)
+    cam_b = key_to_camelot_map.get(key_b)
+    
+    if not cam_a or not cam_b:
+        return None
+
+    # 3. Identification du duel
+    pair = f"{cam_a}_vs_{cam_b}"
+    pair_rev = f"{cam_b}_vs_{cam_a}"
+    duel = signatures.get(pair) or signatures.get(pair_rev)
+
+    # 4. Analyse du signal traité si un duel est identifié
+    if duel:
+        # On extrait les 5 notes les plus fortes du signal traité
+        top_notes_indices = np.argsort(chroma_global)[-5:]
+        top_notes = [NOTES_LIST[i] for i in np.argsort(chroma_global)[-5:]]
+        
+        for note_p, winner_camelot in duel.items():
+            if note_p in top_notes:
+                # On renvoie le nom long correspondant au gagnant (ex: 'G# major')
+                for long_name, cam_code in key_to_camelot_map.items():
+                    if cam_code == winner_camelot:
+                        return long_name
+    
+    return None
+
 def seconds_to_mmss(seconds):
     if seconds is None:
         return "??:??"
@@ -397,48 +449,43 @@ def process_audio(audio_file, file_name, progress_placeholder):
     status_text.empty()
     progress_bar.empty()
 
-    # --- MOTEUR DE DÉCISION SNIPER V5.7 (Logique Temporelle & Fiabilité) ---
-    
-    # 1. RÈGLE D'OR : LE VERROU 99% 
-    dominant_conf = min(dominant_conf, 99) # Plafonne le bug du 117%
-    confiance_pure_key = final_key # Par défaut
-    avis_expert = "✅ ANALYSE STABLE"
-    color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
-    if final_conf >= 99:
+    # --- MOTEUR DE DÉCISION SNIPER V7.5 ---
+
+    # A. On tente l'arbitrage harmonique PRIORITAIRE (sur signal traité)
+    # Cette fonction ne renverra quelque chose QUE si final_key et dominant_key sont voisins
+    decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
+
+    if decision_pivot:
+        confiance_pure_key = decision_pivot
+        avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
+        color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
+
+    # B. Sinon, on applique tes règles habituelles (Verrou, Présence, Cadence)
+    elif final_conf >= 99 and dominant_percentage < 85:
         confiance_pure_key = final_key
         avis_expert = "💎 ANALYSE INDISCUTABLE (99%)"
         color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
-    # 2. PALIER > 50% : CHOIX PRIORITAIRE (Ton cas "Bounce.mp3")
-    # Si la dominante est omniprésente et assez fiable, elle devient la tonique.
     elif dominant_percentage > 50.0 and dominant_conf >= 75:
         confiance_pure_key = dominant_key
         avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
         color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
 
-    # 3. PALIER 35% à 50% : VÉRIFICATION CADENCE
-    # On ne bascule que si le morceau finit effectivement sur cette note (résolution).
     elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
         if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
             confiance_pure_key = dominant_key
             avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
         else:
-            # Si pas de résolution à la fin, on reste sur la consonance globale
             confiance_pure_key = final_key
-            avis_expert = "🎹 CONSONANCE GLOBALE (Dominante instable)"
+            avis_expert = "✅ CONSONANCE GLOBALE"
             color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
-    # 4. PALIER < 30% : IGNORER (Passage éphémère)
-    # On reste sur la clé de consonance principale par défaut.
     else:
+        # Par défaut on garde la consonance
         confiance_pure_key = final_key
-        if final_conf < 60:
-            avis_expert = "⚠️ SIGNAL FAIBLE : À vérifier au casque"
-            color_bandeau = "linear-gradient(135deg, #7f1d1d, #450a0a)"
-        else:
-            avis_expert = "✅ ANALYSE STABLE"
-            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+        avis_expert = "✅ ANALYSE STABLE"
+        color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
