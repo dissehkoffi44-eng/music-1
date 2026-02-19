@@ -675,7 +675,15 @@ if uploaded_files:
 
                 mod_alert = ""
                 if analysis_data['modulation']:
-                    mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
+                    ends_badge = " &nbsp; 🏁 <b>FIN SUR MODULATION</b>" if analysis_data['mod_ends_in_target'] else ""
+                    mod_alert = (
+                        f"<div class='modulation-alert'>"
+                        f"⚠️ MODULATION : <b>{analysis_data['target_key'].upper()}</b> ({analysis_data['target_camelot']})"
+                        f" &nbsp;|&nbsp; PRÉSENCE : <b>{analysis_data['mod_target_percentage']}%</b>"
+                        f" &nbsp;|&nbsp; CONFIANCE : <b>{analysis_data['target_conf']}%</b>"
+                        f"{ends_badge}"
+                        f"</div>"
+                    )
 
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
