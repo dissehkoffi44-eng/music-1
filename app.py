@@ -456,33 +456,37 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V7.5 ---
+        # --- MOTEUR DE DÉCISION SNIPER V8.0 (INVERSION DE PRIORITÉ) ---
         #
-        # 🔒 RÈGLE 0 — LE VERROU DE CONFIANCE  ← CONDITION PREMIÈRE, PRIORITÉ ABSOLUE
+        # ⚖️ RÈGLE 0 — ARBITRAGE HARMONIQUE  ← PRIORITÉ ABSOLUE
         #
-        # Si la consonance globale atteint >= 99%, elle prend le dessus immédiatement.
-        # Aucune autre règle (arbitrage pivot, dominante, cadence) ne peut l'écraser.
+        # Si un duel de voisins Camelot est détecté, la note pivot tranche en premier.
+        # Cette règle écrase même un score statistique à 99%, car un pivot harmonique
+        # est une preuve physique irréfutable — plus fiable qu'une corrélation de profil.
+        #
+        # 🔒 RÈGLE 1 — VERROU DE CONFIANCE (99%)
+        #
+        # S'active uniquement si aucun pivot n'a contredit la mesure statistique.
         # Garde-fou contre les faux basculements causés par une petite erreur de note.
-        #
-        # NOTE : l'ancienne implémentation ajoutait "and dominant_percentage < 85"
-        # ce qui permettait de contourner le verrou — cette sous-condition a été retirée.
         # ══════════════════════════════════════════════════════════════════════════
-        if final_conf >= 99:
+
+        # ── RÈGLE 0 : Arbitrage harmonique par notes pivots (voisins Camelot) ──
+        decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
+
+        if decision_pivot:
+            confiance_pure_key = decision_pivot
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"
+
+        # ── RÈGLE 1 : Verrou de confiance 99% (si aucun pivot ne contredit) ──
+        elif final_conf >= 99:
             confiance_pure_key = final_key
             avis_expert = "🔒 VERROU DE CONFIANCE (99%)"
             color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)"
 
         else:
-            # ── RÈGLE A : Arbitrage harmonique par notes pivots (voisins Camelot) ──
-            decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
-
-            if decision_pivot:
-                confiance_pure_key = decision_pivot
-                avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
-                color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"
-
             # ── RÈGLE B : Dominante écrasante ──
-            elif dominant_percentage > 50.0 and dominant_conf >= 75:
+            if dominant_percentage > 50.0 and dominant_conf >= 75:
                 confiance_pure_key = dominant_key
                 avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
                 color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
