@@ -21,7 +21,7 @@ import tempfile
 import shutil
 
 # --- CONFIGURATION SYSTÈME ---
-st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="", layout="wide")
+st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
 
 # Récupération des secrets
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
@@ -30,12 +30,14 @@ CHAT_ID = st.secrets.get("CHAT_ID")
 # --- RÉFÉRENTIELS HARMONIQUES ---
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in ['major', 'minor']]
+
 CAMELOT_MAP = {
     'C major': '8B', 'C# major': '3B', 'D major': '10B', 'D# major': '5B', 'E major': '12B', 'F major': '7B',
     'F# major': '2B', 'G major': '9B', 'G# major': '4B', 'A major': '11B', 'A# major': '6B', 'B major': '1B',
     'C minor': '5A', 'C# minor': '12A', 'D minor': '7A', 'D# minor': '2A', 'E minor': '9A', 'F minor': '4A',
     'F# minor': '11A', 'G minor': '6A', 'G# minor': '1A', 'A minor': '8A', 'A# minor': '3A', 'B minor': '10A'
 }
+
 PROFILES = {
     "krumhansl": {
         "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
@@ -83,57 +85,6 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
-    """
-    Arbitrage intelligent basé sur les notes pivots pour départager les voisins.
-    Utilise le signal traité (chroma_global).
-    """
-    # 1. Signatures complètes de la Roue Camelot
-    signatures = {
-        # --- MINEURS (A) ---
-        '1A_vs_2A':  {'A#': '2A', 'A': '1A'},   # G#m vs D#m
-        '2A_vs_3A':  {'F':  '3A', 'E': '2A'},   # D#m vs A#m
-        '8A_vs_9A':  {'F#': '9A', 'F': '8A'},   # Am vs Em
-        '9A_vs_10A': {'C#': '10A', 'C': '9A'},  # Em vs Bm
-        '10A_vs_11A': {'G#': '11A', 'G': '10A'}, # Bm vs F#m (F# MINOR = 11A)
-        '11A_vs_12A': {'D#': '12A', 'D': '11A'}, # F#m vs C#m
-        '12A_vs_1A':  {'A#': '1A', 'A': '12A'},  # C#m vs G#m    
-        # --- MAJEURS (B) ---
-        '4B_vs_5B':  {'D':  '5B', 'C#': '4B'},  # Ab vs Eb
-        '5B_vs_6B':  {'A':  '6B', 'G#': '5B'},  # Eb vs Bb
-        '8B_vs_9B':  {'F#': '9B', 'F':  '8B'},  # C vs G
-        '9B_vs_10B': {'C#': '10B', 'C': '9B'},  # G vs D
-        '10B_vs_11B': {'G#': '11B', 'G': '10B'}, # D vs A
-        '11B_vs_12B': {'D#': '12B', 'D': '11B'}, # A vs E
-    }
-
-    # 2. Conversion des clés d'entrée en format Camelot (ex: '4B')
-    cam_a = key_to_camelot_map.get(key_a)
-    cam_b = key_to_camelot_map.get(key_b)
-
-    if not cam_a or not cam_b:
-        return None
-
-    # 3. Identification du duel
-    pair = f"{cam_a}_vs_{cam_b}"
-    pair_rev = f"{cam_b}_vs_{cam_a}"
-    duel = signatures.get(pair) or signatures.get(pair_rev)
-
-    # 4. Analyse du signal traité si un duel est identifié
-    if duel:
-        # On extrait les 5 notes les plus fortes du signal traité
-        top_notes_indices = np.argsort(chroma_global)[-5:]
-        top_notes = [NOTES_LIST[i] for i in np.argsort(chroma_global)[-5:]]
-        
-        for note_p, winner_camelot in duel.items():
-            if note_p in top_notes:
-                # On renvoie le nom long correspondant au gagnant (ex: 'G# major')
-                for long_name, cam_code in key_to_camelot_map.items():
-                    if cam_code == winner_camelot:
-                        return long_name
-
-    return None
-
 def seconds_to_mmss(seconds):
     if seconds is None:
         return "??:??"
@@ -164,9 +115,10 @@ def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm
     # Calcul global des features
     chroma_full = librosa.feature.chroma_cqt(y=y, sr=sr, n_chroma=12)
     flatness = librosa.feature.spectral_flatness(y=y)  # Haut pour percussion/voix parlée, bas pour harmonie
+    
     harmonic_starts = []
     segments = range(0, int(duration) - step, step // 2)  # Plus fin pour détection
-
+    
     for start in segments:
         idx_start, idx_end = int(start * sr), int((start + step) * sr)
         seg_chroma = chroma_full[:, idx_start//(sr//2048):idx_end//(sr//2048)]  # Approx hop_length=2048
@@ -177,28 +129,28 @@ def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm
         # Segment harmonique si variance chroma > seuil ET flatness < seuil (pas trop percussif)
         if chroma_var > harm_threshold and seg_flat < perc_threshold:
             harmonic_starts.append(start)
-
+    
     if not harmonic_starts:
         return 0, duration  # Fallback: toute la chanson
-
+    
     # Trouver la section harmonique principale (plus longue séquence continue)
     harmonic_starts = np.array(harmonic_starts)
     diffs = np.diff(harmonic_starts)
     breaks = np.where(diffs > step)[0]
-
+    
     sections = np.split(harmonic_starts, breaks + 1)
     longest_section = max(sections, key=len)
-
+    
     if len(longest_section) * step < min_harm_duration:
         return 0, duration  # Si trop court, fallback
-
+    
     harm_start = longest_section[0]
     harm_end = longest_section[-1] + step
-
+    
     # Ajuster pour ignorer intros/outros courts
     harm_start = max(harm_start, 5)  # Skip premiers 5s si possible
     harm_end = min(harm_end, duration - 5)
-
+    
     return harm_start, harm_end
 
 def detect_cadence_resolution(timeline, final_key):
@@ -210,6 +162,7 @@ def detect_cadence_resolution(timeline, final_key):
     root_idx = NOTES_LIST.index(note)
     dom_idx = (root_idx + 7) % 12  # Dominante (V)
     subdom_idx = (root_idx + 5) % 12  # Sous-dominante (IV), optionnel
+    
     resolution_count = 0
     for i in range(1, len(timeline)):
         prev_note = timeline[i-1]["Note"]
@@ -229,21 +182,22 @@ def detect_cadence_resolution(timeline, final_key):
         subdom_key = f"{NOTES_LIST[subdom_idx]} {mode}"
         if prev_note == subdom_key and curr_note == final_key:
             resolution_count += 0.5  # Poids moindre pour II-V-I ou IV-I
-
+    
     # Bonus si résolutions fréquentes, surtout à la fin
     last_third = len(timeline) // 3
     last_resolutions = sum(1 for j in range(len(timeline) - last_third, len(timeline) - 1) 
                           if timeline[j]["Note"].startswith(NOTES_LIST[dom_idx]) and timeline[j+1]["Note"] == final_key)
-
+    
     cadence_score = resolution_count + (last_resolutions * 2)  # Double poids pour fin
     return cadence_score
 
 def solve_key_sniper(chroma_vector, bass_vector):
     best_overall_score = -1
     best_key = "Unknown"
+    
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
-
+    
     for mode in ["major", "minor"]:
         for i in range(12):
             profile_scores = []
@@ -276,9 +230,10 @@ def solve_key_sniper(chroma_vector, bass_vector):
 def get_key_score(key, chroma_vector, bass_vector):
     note, mode = key.split()
     root_idx = NOTES_LIST.index(note)
+    
     cv_norm = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv_norm = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
-
+    
     profile_scores = []
     for p_name, p_data in PROFILES.items():
         corr = np.corrcoef(cv_norm, np.roll(p_data[mode], root_idx))[0, 1]
@@ -299,13 +254,14 @@ def get_key_score(key, chroma_vector, bass_vector):
         if cv_norm[third_idx] > 0.5: score += 0.1
         
         profile_scores.append(score)
-
+    
     return np.mean(profile_scores)
+
 
 def process_audio(audio_file, file_name, progress_placeholder):
     status_text = progress_placeholder.empty()
     progress_bar = progress_placeholder.progress(0)
-    
+
     def update_prog(value, text):
         progress_bar.progress(value)
         status_text.markdown(f"**{text} | {value}%**")
@@ -325,18 +281,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
             sr = 22050
     else:
         y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
-
+    
     update_prog(20, "Détection des sections harmoniques")
     duration = librosa.get_duration(y=y, sr=sr)
     harm_start, harm_end = detect_harmonic_sections(y, sr, duration)
     update_prog(30, f"Section harmonique détectée : {seconds_to_mmss(harm_start)} à {seconds_to_mmss(harm_end)}")
-
+    
     # Limiter l'analyse à la section harmonique
     idx_harm_start = int(harm_start * sr)
     idx_harm_end = int(harm_end * sr)
     y_harm = y[idx_harm_start:idx_harm_end]
     duration_harm = harm_end - harm_start
-
+    
     update_prog(40, "Filtrage des fréquences")
     tuning = librosa.estimate_tuning(y=y_harm, sr=sr)
     y_filt = apply_sniper_filters(y_harm, sr)
@@ -348,7 +304,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
     update_prog(50, "Analyse du spectre harmonique")
     step, timeline, votes = 6, [], Counter()
     segments = range(0, int(duration_harm) - step, 2)
-
+    
     for i, start in enumerate(segments):
         idx_start, idx_end = int(start * sr), int((start + step) * sr)
         seg = y_filt[idx_start:idx_end]
@@ -376,7 +332,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
     res_global = solve_key_sniper(chroma_avg, bass_global)
     final_key = res_global['key']
     final_conf = int(res_global['score'] * 100)
-
+    
     # Validation supplémentaire via détection de cadences et résolution
     cadence_score = detect_cadence_resolution(timeline, final_key)
     if cadence_score < 2 and len(most_common) > 1:
@@ -386,18 +342,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
         if alt_cadences[best_alt] > cadence_score + 1:
             final_key = best_alt
             final_conf = int(get_key_score(final_key, chroma_avg, bass_global) * 100)
-
+    
     # Bonus de confiance si forte résolution à la fin
     if timeline and timeline[-1]["Note"] == final_key:
         final_conf = min(final_conf + 5, 99)  # Bonus pour fin sur la tonique
-
+    
     # Calcul de la tonalité dominante (la plus fréquente dans les votes)
     dominant_key = most_common[0][0] if most_common else "Unknown"
     dominant_votes = most_common[0][1] if most_common else 0
     dominant_percentage = (dominant_votes / total_votes * 100) if total_votes > 0 else 0
     dominant_conf = int(get_key_score(dominant_key, chroma_avg, bass_global) * 100) if dominant_key != "Unknown" else 0
     dominant_camelot = CAMELOT_MAP.get(dominant_key, "??")
-
+    
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
     target_key = most_common[1][0] if mod_detected else None
 
@@ -441,43 +397,48 @@ def process_audio(audio_file, file_name, progress_placeholder):
     status_text.empty()
     progress_bar.empty()
 
-    # --- MOTEUR DE DÉCISION SNIPER V7.5 ---
-
-    # A. On tente l'arbitrage harmonique PRIORITAIRE (sur signal traité)
-    # Cette fonction ne renverra quelque chose QUE si final_key et dominant_key sont voisins
-    decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
-
-    if decision_pivot:
-        confiance_pure_key = decision_pivot
-        avis_expert = " ARBITRAGE HARMONIQUE (Pivot détecté)"
-        color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
-
-    # B. Sinon, on applique tes règles habituelles (Verrou, Présence, Cadence)
-    elif final_conf >= 99 and dominant_percentage < 85:
+    # --- MOTEUR DE DÉCISION SNIPER V5.7 (Logique Temporelle & Fiabilité) ---
+    
+    # 1. RÈGLE D'OR : LE VERROU 99% 
+    dominant_conf = min(dominant_conf, 99) # Plafonne le bug du 117%
+    confiance_pure_key = final_key # Par défaut
+    avis_expert = "✅ ANALYSE STABLE"
+    color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+    if final_conf >= 99:
         confiance_pure_key = final_key
-        avis_expert = " ANALYSE INDISCUTABLE (99%)"
+        avis_expert = "💎 ANALYSE INDISCUTABLE (99%)"
         color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
+    # 2. PALIER > 50% : CHOIX PRIORITAIRE (Ton cas "Bounce.mp3")
+    # Si la dominante est omniprésente et assez fiable, elle devient la tonique.
     elif dominant_percentage > 50.0 and dominant_conf >= 75:
         confiance_pure_key = dominant_key
-        avis_expert = f" DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
+        avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
         color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
 
+    # 3. PALIER 35% à 50% : VÉRIFICATION CADENCE
+    # On ne bascule que si le morceau finit effectivement sur cette note (résolution).
     elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
         if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
             confiance_pure_key = dominant_key
-            avis_expert = f" RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
+            avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
         else:
+            # Si pas de résolution à la fin, on reste sur la consonance globale
             confiance_pure_key = final_key
-            avis_expert = " CONSONANCE GLOBALE"
+            avis_expert = "🎹 CONSONANCE GLOBALE (Dominante instable)"
             color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
+    # 4. PALIER < 30% : IGNORER (Passage éphémère)
+    # On reste sur la clé de consonance principale par défaut.
     else:
-        # Par défaut on garde la consonance
         confiance_pure_key = final_key
-        avis_expert = " ANALYSE STABLE"
-        color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+        if final_conf < 60:
+            avis_expert = "⚠️ SIGNAL FAIBLE : À vérifier au casque"
+            color_bandeau = "linear-gradient(135deg, #7f1d1d, #450a0a)"
+        else:
+            avis_expert = "✅ ANALYSE STABLE"
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
 
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
@@ -498,7 +459,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "avis_expert": avis_expert,
         "color_bandeau": color_bandeau,
     }
-
+    
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
@@ -507,25 +468,25 @@ def process_audio(audio_file, file_name, progress_placeholder):
             if mod_detected:
                 perc = res_obj["mod_target_percentage"]
                 end_txt = " → **fin en " + target_key.upper() + " (" + res_obj['target_camelot'] + ")**" if res_obj['mod_ends_in_target'] else ""
-                mod_line = f"\n *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
+                mod_line = f"\n⚠️ *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
             
             # Ajout de la tonalité dominante au caption
-            dom_line = f"\n *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})` | *POURCENTAGE:* `{res_obj['dominant_percentage']}%` | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
+            dom_line = f"\n🏆 *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})` | *POURCENTAGE:* `{res_obj['dominant_percentage']}%` | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
             
             # Ajout de la tonalité pure
-            pure_line = f"\n *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
+            pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
             
             caption = (
-                f" *RCDJ228 MUSIC SNIPER*\n"
+                f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f" *FICHIER:* `{file_name}`\n"
-                f" *TONALITÉ MEILLEURE CONSONANCE:* `{final_key.upper()}` ({res_obj['camelot']}) | *CONFIANCE:* `{res_obj['conf']}%`\n"
+                f"📂 *FICHIER:* `{file_name}`\n"
+                f"🎹 *TONALITÉ MEILLEURE CONSONANCE:* `{final_key.upper()}` ({res_obj['camelot']}) | *CONFIANCE:* `{res_obj['conf']}%`\n"
                 + dom_line
                 + pure_line
                 + f"{mod_line}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f" *ACCORDAGE:* `{res_obj['tuning']} Hz` \n"
-                f" *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
+                f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
+                f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
             )
 
             # 2. Génération du Graphique RADAR (Spectre)
@@ -566,16 +527,15 @@ def process_audio(audio_file, file_name, progress_placeholder):
     with open(timeline_path, 'wb') as tf:
         pickle.dump(res_obj['timeline'], tf)
     np.save(chroma_path, res_obj['chroma'])
-
+    
     # Stocke chemins au lieu des données en mémoire
     res_obj['timeline_path'] = timeline_path
     res_obj['chroma_path'] = chroma_path
     res_obj['temp_dir'] = temp_dir  # Pour nettoyage ultérieur si besoin
     del res_obj['timeline']  # Supprime de la mémoire
     del res_obj['chroma']
-
-    del y, y_filt
-    gc.collect()
+    
+    del y, y_filt; gc.collect()
     return res_obj
 
 def get_chord_js(btn_id, key_str):
@@ -598,12 +558,13 @@ def get_chord_js(btn_id, key_str):
     """
 
 # --- DASHBOARD PRINCIPAL ---
-st.title(" RCDJ228 MUSIC SNIPER")
+st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique 99% précis")
 
 # Ajout d'un placeholder pour le statut global en haut de la page
 global_status = st.empty()
-uploaded_files = st.file_uploader(" Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True, key="file_uploader")
+
+uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True, key="file_uploader")
 
 # Initialiser session_state pour stocker les analyses
 if 'analyses' not in st.session_state:
@@ -641,11 +602,11 @@ if uploaded_files:
             chroma = np.load(analysis_data['chroma_path'])
             
             with st.container():
-                st.markdown(f"<div class='file-header'> ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
                 
                 mod_alert = ""
                 if analysis_data['modulation']:
-                    mod_alert = f"<div class='modulation-alert'> MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']})   |   CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
+                    mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
                 
                 # Affichage des deux tonalités côte à côte avec ajout de dominant_conf
                 st.markdown(f"""
@@ -669,12 +630,11 @@ if uploaded_files:
                 """, unsafe_allow_html=True)
                 
                 m2, m3 = st.columns(2)
-                with m2: 
-                    st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b>\n<span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span>\nHz</div>", unsafe_allow_html=True)
+                with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
                 with m3:
                     btn_id = f"play_{hash(analysis_data['name'])}"
                     components.html(f"""
-                        <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;"> TESTER L'ACCORD</button>
+                        <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
                         <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                     """, height=110)
 
@@ -693,15 +653,15 @@ if uploaded_files:
             # Libère après usage
             del timeline, chroma
             gc.collect()
-
-st.session_state.analyzing = False
-global_status.success("Tous les fichiers ont été analysés avec succès !")
-gc.collect()
+    
+    st.session_state.analyzing = False
+    global_status.success("Tous les fichiers ont été analysés avec succès !")
+    gc.collect()
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
     st.header("Sniper Control")
-    if st.button(" Vider la file d'analyse"):
+    if st.button("🧹 Vider la file d'analyse"):
         for data in list(st.session_state.analyses.values()):
             if 'temp_dir' in data and os.path.exists(data['temp_dir']):
                 shutil.rmtree(data['temp_dir'])
