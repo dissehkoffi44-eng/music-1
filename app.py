@@ -460,23 +460,21 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V9.0 (OPTIMISÉ PAR PUISSANCE) ---
+        # --- MOTEUR DE DÉCISION SNIPER V9.5 (MODULATION PROPORTIONNELLE) ---
         # ══════════════════════════════════════════════════════════════════════════
 
         # ÉTAPE 0 : Calcul des scores de puissance (Confiance × √Présence)
         final_power = min(final_conf, 99) * np.sqrt(final_percentage)
         dom_power   = dominant_conf * np.sqrt(dominant_percentage)
 
+        # ÉTAPE 0b : Seuil de modulation dynamique (20% du morceau, max 60s)
+        total_duration = duration  # durée totale du fichier audio
+        dynamic_threshold = min(total_duration * 0.20, 60)
+
         # ÉTAPE 1 : Arbitrage harmonique (duel de voisins Camelot)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
             decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
-
-        # Timing de modulation (Limite 30s depuis le début de la section harmonique)
-        mod_is_too_late = True
-        if mod_detected and modulation_time is not None:
-            if (modulation_time - harm_start) <= 30:
-                mod_is_too_late = False
 
         # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Pivot de Voisinage)
         if decision_pivot:
@@ -491,11 +489,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
             avis_expert = f"🛡️ DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
 
-        # 3️⃣ PRIORITÉ 3 : MODULATION ÉCLAIR (< 30s depuis section harmonique)
-        elif mod_detected and ends_in_target and target_percentage >= 25.0 and not mod_is_too_late:
-            confiance_pure_key = target_key
-            avis_expert = f"🏁 MODULATION ÉCLAIR (@ {seconds_to_mmss(modulation_time)})"
-            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Rouge/Violet
+        # 3️⃣ PRIORITÉ 3 : MODULATION INTELLIGENTE (PROPORTIONNELLE)
+        elif mod_detected and ends_in_target and target_percentage >= 25.0:
+            if modulation_time is not None and modulation_time <= dynamic_threshold:
+                # Modulation dans le premier 20% du morceau → on la valide
+                confiance_pure_key = target_key
+                avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
+                color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Violet
+            else:
+                # Modulation trop tardive → on reste sur la dominante initiale
+                confiance_pure_key = dominant_key
+                avis_expert = "🔄 MODULATION TARDIVE (Ignorée)"
+                color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
 
         # 4️⃣ FALLBACK : CONSONANCE STABLE
         else:
@@ -520,6 +525,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "dominant_key": dominant_key, "dominant_camelot": dominant_camelot,
             "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1),
             "key_presence": round(final_percentage, 1),
+            "duration_detected": round(total_duration, 1),
             "confiance_pure": confiance_pure_key,
             "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
             "avis_expert": avis_expert,
