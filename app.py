@@ -543,17 +543,29 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 mod_line = ""
                 if mod_detected:
                     perc = res_obj["mod_target_percentage"]
-                    end_txt = " → **fin en " + target_key.upper() + " (" + res_obj['target_camelot'] + ")**" if res_obj['mod_ends_in_target'] else ""
-                    mod_line = f"\n⚠️ *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
+                    end_txt = " 🏁 *FIN SUR MODULATION*" if res_obj['mod_ends_in_target'] else ""
+                    mod_line = (
+                        f"\n⚠️ *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})`"
+                        f" | ≈ *{res_obj['modulation_time_str']}*"
+                        f" | *PRÉSENCE:* `{perc}%`"
+                        f" | *CONFIANCE:* `{res_obj['target_conf']}%`"
+                        f"{end_txt}"
+                    )
 
-                dom_line = f"\n🏆 *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})` | *POURCENTAGE:* `{res_obj['dominant_percentage']}%` | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
+                dom_line = (
+                    f"\n🏆 *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})`"
+                    f" | *PRÉSENCE:* `{res_obj['dominant_percentage']}%`"
+                    f" | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
+                )
                 pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
 
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"📂 *FICHIER:* `{file_name}`\n"
-                    f"🎹 *TONALITÉ MEILLEURE CONSONANCE:* `{final_key.upper()}` ({res_obj['camelot']}) | *CONFIANCE:* `{res_obj['conf']}%`\n"
+                    f"🎹 *MEILLEURE CONSONANCE:* `{final_key.upper()} ({res_obj['camelot']})`"
+                    f" | *PRÉSENCE:* `{res_obj['dominant_percentage']}%`"
+                    f" | *CONFIANCE:* `{res_obj['conf']}%`"
                     + dom_line
                     + pure_line
                     + f"{mod_line}\n"
@@ -698,8 +710,8 @@ if uploaded_files:
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
                         <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
-                            DÉTAILS : Consonance {analysis_data['key'].upper()} ({analysis_data['conf']}%) 
-                            | Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_percentage']}%) | Confiance Dominante {analysis_data['dominant_conf']}%
+                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['conf']}%
+                            &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | CONFIANCE {analysis_data['dominant_conf']}%
                         </p>
                         {mod_alert}
                     </div>
