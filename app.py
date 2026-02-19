@@ -15,6 +15,10 @@ from datetime import datetime
 from pydub import AudioSegment
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist
+import pickle
+import os
+import tempfile
+import shutil
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -80,6 +84,58 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- MOTEURS DE CALCUL ---
+
+def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
+    """
+    Arbitrage intelligent basé sur les notes pivots pour départager les voisins.
+    Utilise le signal traité (chroma_global).
+    """
+    # 1. Signatures complètes de la Roue Camelot
+    signatures = {
+        # --- MINEURS (A) ---
+        '1A_vs_2A':  {'A#': '2A', 'A': '1A'},   # G#m vs D#m
+        '2A_vs_3A':  {'F':  '3A', 'E': '2A'},   # D#m vs A#m
+        '8A_vs_9A':  {'F#': '9A', 'F': '8A'},   # Am vs Em
+        '9A_vs_10A': {'C#': '10A', 'C': '9A'},  # Em vs Bm
+        '10A_vs_11A': {'G#': '11A', 'G': '10A'}, # Bm vs F#m (F# MINOR = 11A)
+        '11A_vs_12A': {'D#': '12A', 'D': '11A'}, # F#m vs C#m
+        '12A_vs_1A':  {'A#': '1A', 'A': '12A'},  # C#m vs G#m
+
+        # --- MAJEURS (B) ---
+        '4B_vs_5B':  {'D':  '5B', 'C#': '4B'},  # Ab vs Eb
+        '5B_vs_6B':  {'A':  '6B', 'G#': '5B'},  # Eb vs Bb
+        '8B_vs_9B':  {'F#': '9B', 'F':  '8B'},  # C vs G
+        '9B_vs_10B': {'C#': '10B', 'C': '9B'},  # G vs D
+        '10B_vs_11B': {'G#': '11B', 'G': '10B'}, # D vs A
+        '11B_vs_12B': {'D#': '12B', 'D': '11B'}, # A vs E
+    }
+
+    # 2. Conversion des clés d'entrée en format Camelot (ex: '4B')
+    cam_a = key_to_camelot_map.get(key_a)
+    cam_b = key_to_camelot_map.get(key_b)
+    
+    if not cam_a or not cam_b:
+        return None
+
+    # 3. Identification du duel
+    pair = f"{cam_a}_vs_{cam_b}"
+    pair_rev = f"{cam_b}_vs_{cam_a}"
+    duel = signatures.get(pair) or signatures.get(pair_rev)
+
+    # 4. Analyse du signal traité si un duel est identifié
+    if duel:
+        # On extrait les 5 notes les plus fortes du signal traité
+        top_notes_indices = np.argsort(chroma_global)[-5:]
+        top_notes = [NOTES_LIST[i] for i in np.argsort(chroma_global)[-5:]]
+        
+        for note_p, winner_camelot in duel.items():
+            if note_p in top_notes:
+                # On renvoie le nom long correspondant au gagnant (ex: 'G# major')
+                for long_name, cam_code in key_to_camelot_map.items():
+                    if cam_code == winner_camelot:
+                        return long_name
+    
+    return None
 
 def seconds_to_mmss(seconds):
     if seconds is None:
@@ -389,15 +445,51 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 last_key = last_counter.most_common(1)[0][0]
                 ends_in_target = (last_key == target_key)
 
-    tempo, _ = librosa.beat.beat_track(y=y_harm, sr=sr)  # Tempo sur section harmonique
-
     update_prog(100, "Analyse terminée")
     status_text.empty()
     progress_bar.empty()
 
+    # --- MOTEUR DE DÉCISION SNIPER V7.5 ---
+
+    # A. On tente l'arbitrage harmonique PRIORITAIRE (sur signal traité)
+    # Cette fonction ne renverra quelque chose QUE si final_key et dominant_key sont voisins
+    decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
+
+    if decision_pivot:
+        confiance_pure_key = decision_pivot
+        avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
+        color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
+
+    # B. Sinon, on applique tes règles habituelles (Verrou, Présence, Cadence)
+    elif final_conf >= 99 and dominant_percentage < 85:
+        confiance_pure_key = final_key
+        avis_expert = "💎 ANALYSE INDISCUTABLE (99%)"
+        color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+
+    elif dominant_percentage > 50.0 and dominant_conf >= 75:
+        confiance_pure_key = dominant_key
+        avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({dominant_percentage}%)"
+        color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
+
+    elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
+        if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
+            confiance_pure_key = dominant_key
+            avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({dominant_percentage}%)"
+            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
+        else:
+            confiance_pure_key = final_key
+            avis_expert = "✅ CONSONANCE GLOBALE"
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+
+    else:
+        # Par défaut on garde la consonance
+        confiance_pure_key = final_key
+        avis_expert = "✅ ANALYSE STABLE"
+        color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
-        "conf": min(final_conf, 99), "tempo": int(float(tempo)),
+        "conf": min(final_conf, 99),
         "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
         "chroma": chroma_avg, "modulation": mod_detected,
         "target_key": target_key, "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
@@ -408,7 +500,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "harm_start": seconds_to_mmss(harm_start), "harm_end": seconds_to_mmss(harm_end),
         "target_conf": target_conf,
         "dominant_key": dominant_key, "dominant_camelot": dominant_camelot,
-        "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1)
+        "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1),
+        "confiance_pure": confiance_pure_key,
+        "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
+        "avis_expert": avis_expert,
+        "color_bandeau": color_bandeau,
     }
     
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -424,15 +520,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
             # Ajout de la tonalité dominante au caption
             dom_line = f"\n🏆 *DOMINANTE:* `{dominant_key.upper()} ({res_obj['dominant_camelot']})` | *POURCENTAGE:* `{res_obj['dominant_percentage']}%` | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
             
+            # Ajout de la tonalité pure
+            pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
+            
             caption = (
                 f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📂 *FICHIER:* `{file_name}`\n"
                 f"🎹 *TONALITÉ MEILLEURE CONSONANCE:* `{final_key.upper()}` ({res_obj['camelot']}) | *CONFIANCE:* `{res_obj['conf']}%`\n"
-                + dom_line +
-                f"{mod_line}\n"
+                + dom_line
+                + pure_line
+                + f"{mod_line}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
                 f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
                 f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
             )
@@ -468,6 +567,21 @@ def process_audio(audio_file, file_name, progress_placeholder):
         except Exception as e:
             st.error(f"Erreur d'envoi Telegram : {e}")
 
+    # Sauvegarde disque pour données lourdes
+    temp_dir = tempfile.mkdtemp()  # Créer un dossier temporaire persistant pour la session
+    timeline_path = os.path.join(temp_dir, f"{file_name}_timeline.pkl")
+    chroma_path = os.path.join(temp_dir, f"{file_name}_chroma.npy")
+    with open(timeline_path, 'wb') as tf:
+        pickle.dump(res_obj['timeline'], tf)
+    np.save(chroma_path, res_obj['chroma'])
+    
+    # Stocke chemins au lieu des données en mémoire
+    res_obj['timeline_path'] = timeline_path
+    res_obj['chroma_path'] = chroma_path
+    res_obj['temp_dir'] = temp_dir  # Pour nettoyage ultérieur si besoin
+    del res_obj['timeline']  # Supprime de la mémoire
+    del res_obj['chroma']
+    
     del y, y_filt; gc.collect()
     return res_obj
 
@@ -497,63 +611,108 @@ st.markdown("#### Système d'Analyse Harmonique 99% précis")
 # Ajout d'un placeholder pour le statut global en haut de la page
 global_status = st.empty()
 
-uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
+uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True, key="file_uploader")
+
+# Initialiser session_state pour stocker les analyses
+if 'analyses' not in st.session_state:
+    st.session_state.analyses = {}
+if 'analyzing' not in st.session_state:
+    st.session_state.analyzing = False
 
 if uploaded_files:
     global_status.info("Analyse des fichiers en cours...")
-    
     progress_zone = st.container()
     
-    for f in reversed(uploaded_files):
-        analysis_data = process_audio(f, f.name, progress_zone)
+    # Boucle sur les fichiers en reversed pour cohérence
+    for i, f in enumerate(reversed(uploaded_files)):
+        file_name = f.name
         
-        with st.container():
-            st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
-            color = "linear-gradient(135deg, #065f46, #064e3b)" if analysis_data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
+        if file_name not in st.session_state.analyses:
+            st.session_state.analyzing = True
+            # Analyser le fichier
+            analysis_data = process_audio(f, file_name, progress_zone)
+            st.session_state.analyses[file_name] = analysis_data
+            # Limiter à 5 fichiers max en session_state
+            if len(st.session_state.analyses) > 5:
+                oldest_file = next(iter(st.session_state.analyses))
+                if 'temp_dir' in st.session_state.analyses[oldest_file] and os.path.exists(st.session_state.analyses[oldest_file]['temp_dir']):
+                    shutil.rmtree(st.session_state.analyses[oldest_file]['temp_dir'])
+                del st.session_state.analyses[oldest_file]
+        
+        # Afficher le résultat immédiatement après analyse (ou si déjà analysé)
+        if file_name in st.session_state.analyses:
+            analysis_data = st.session_state.analyses[file_name]
             
-            mod_alert = ""
-            if analysis_data['modulation']:
-                mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
+            # Charge depuis disque seulement pour l'affichage
+            with open(analysis_data['timeline_path'], 'rb') as tf:
+                timeline = pickle.load(tf)
+            chroma = np.load(analysis_data['chroma_path'])
             
-            # Affichage des deux tonalités côte à côte
-            st.markdown(f"""
-                <div class="report-card" style="background:{color};">
-                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v5.0 <span class="sniper-badge">READY</span></p>
-                    <h1 style="font-size:3em; margin:10px 0; font-weight:900;">
-                        BEST CONSONANCE: {analysis_data['key'].upper()} ({analysis_data['camelot']}) {analysis_data['conf']}% 
-                        | DOMINANT: {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) {analysis_data['dominant_percentage']}%
-                    </h1>
-                    {mod_alert}
-                </div>
-            """, unsafe_allow_html=True)
-            
-            m1, m2, m3 = st.columns(3)
-            with m1: st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em; color:#10b981;'>{analysis_data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-            with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
-            with m3:
-                btn_id = f"play_{hash(analysis_data['name'])}"
-                components.html(f"""
-                    <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
-                    <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
-                """, height=110)
+            with st.container():
+                st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
+                
+                mod_alert = ""
+                if analysis_data['modulation']:
+                    mod_alert = f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']}) &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['target_conf']}%</b></div>"
+                
+                # Affichage des deux tonalités côte à côte avec ajout de dominant_conf
+                st.markdown(f"""
+                    <div class="report-card" style="background:{analysis_data['color_bandeau']};">
+                        <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
+                            SNIPER ENGINE v5.0 | {analysis_data['avis_expert']}
+                        </p>
+                        <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
+                            {analysis_data['pure_camelot']}
+                        </h1>
+                        <p style="font-size:2em; font-weight:bold; margin-top:-10px; margin-bottom:20px; opacity:0.9; text-align: center;">
+                            {analysis_data['confiance_pure'].upper()}
+                        </p>
+                        <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
+                        <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
+                            DÉTAILS : Consonance {analysis_data['key'].upper()} ({analysis_data['conf']}%) 
+                            | Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_percentage']}%) | Confiance Dominante {analysis_data['dominant_conf']}%
+                        </p>
+                        {mod_alert}
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                m2, m3 = st.columns(2)
+                with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
+                with m3:
+                    btn_id = f"play_{hash(analysis_data['name'])}"
+                    components.html(f"""
+                        <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
+                        <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
+                    """, height=110)
 
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                fig_tl = px.line(pd.DataFrame(analysis_data['timeline']), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-                fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_tl, use_container_width=True)
-            with c2:
-                fig_radar = go.Figure(data=go.Scatterpolar(r=analysis_data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
-                fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_radar, use_container_width=True)
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    fig_tl = px.line(pd.DataFrame(timeline), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
+                    fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
+                with c2:
+                    fig_radar = go.Figure(data=go.Scatterpolar(r=chroma, theta=NOTES_LIST, fill='toself', line_color='#10b981'))
+                    fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{analysis_data['name']}_{i}")
+                
+                st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
             
-            st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
+            # Libère après usage
+            del timeline, chroma
+            gc.collect()
     
+    st.session_state.analyzing = False
     global_status.success("Tous les fichiers ont été analysés avec succès !")
+    gc.collect()
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
     st.header("Sniper Control")
     if st.button("🧹 Vider la file d'analyse"):
-        st.cache_data.clear()
+        for data in list(st.session_state.analyses.values()):
+            if 'temp_dir' in data and os.path.exists(data['temp_dir']):
+                shutil.rmtree(data['temp_dir'])
+        st.session_state.analyses = {}
+        st.session_state.analyzing = False
+        gc.collect()  # Ajout ici
         st.rerun()
