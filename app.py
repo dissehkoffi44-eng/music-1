@@ -456,57 +456,43 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V8.0 (INVERSION DE PRIORITÉ) ---
-        #
-        # ⚖️ RÈGLE 0 — ARBITRAGE HARMONIQUE  ← PRIORITÉ ABSOLUE
-        #
-        # Si un duel de voisins Camelot est détecté, la note pivot tranche en premier.
-        # Cette règle écrase même un score statistique à 99%, car un pivot harmonique
-        # est une preuve physique irréfutable — plus fiable qu'une corrélation de profil.
-        #
-        # 🔒 RÈGLE 1 — VERROU DE CONFIANCE (99%)
-        #
-        # S'active uniquement si aucun pivot n'a contredit la mesure statistique.
-        # Garde-fou contre les faux basculements causés par une petite erreur de note.
+        # --- MOTEUR DE DÉCISION SNIPER V8.0 (HIÉRARCHIE DJ PRO) ---
         # ══════════════════════════════════════════════════════════════════════════
 
-        # ── RÈGLE 0 : Arbitrage harmonique par notes pivots (voisins Camelot) ──
+        # ÉTAPE 0 : On prépare l'arbitrage entre les deux meilleures détections
         decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
 
+        # 1️⃣ PRIORITÉ HAUTE : ARBITRAGE HARMONIQUE (Voisins Camelot)
         if decision_pivot:
             confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot détecté)"
-            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Pivot validé)"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
 
-        # ── RÈGLE 1 : Verrou de confiance 99% (si aucun pivot ne contredit) ──
+        # 2️⃣ PRIORITÉ 2 : MODULATION DE RÉSOLUTION (Fin de morceau)
+        elif mod_detected and ends_in_target and target_percentage >= 25.0:
+            confiance_pure_key = target_key
+            avis_expert = f"🏁 RÉSOLUTION FINALE ({round(target_percentage, 1)}%)"
+            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Rouge/Violet
+
+        # 3️⃣ PRIORITÉ 3 : DOMINANTE CERTIFIÉE (Structure forte)
+        elif dominant_percentage >= 35.0 and dominant_conf >= 85:
+            confiance_pure_key = dominant_key
+            avis_expert = f"🏆 DOMINANTE CERTIFIÉE ({round(dominant_percentage, 1)}%)"
+            color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)" # Bleu Royal
+
+        # 4️⃣ PRIORITÉ 4 : VERROU DE CONFIANCE (Sécurité par défaut)
         elif final_conf >= 99:
             confiance_pure_key = final_key
             avis_expert = "🔒 VERROU DE CONFIANCE (99%)"
-            color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)"
+            color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)" # Vert Sombre
 
+        # 5️⃣ FALLBACK : ANALYSE STABLE
         else:
-            # ── RÈGLE B : Dominante écrasante ──
-            if dominant_percentage > 50.0 and dominant_conf >= 75:
-                confiance_pure_key = dominant_key
-                avis_expert = f"🏆 DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
-                color_bandeau = "linear-gradient(135deg, #1e3a8a, #172554)"
+            confiance_pure_key = final_key
+            avis_expert = "✅ ANALYSE STABLE"
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)" # Vert Classique
 
-            # ── RÈGLE C : Dominante modérée avec résolution confirmée ──
-            elif 35.0 <= dominant_percentage <= 50.0 and dominant_conf >= 80:
-                if ends_in_target or (timeline and timeline[-1]["Note"] == dominant_key):
-                    confiance_pure_key = dominant_key
-                    avis_expert = f"🏁 RÉSOLUTION SUR DOMINANTE ({round(dominant_percentage, 1)}%)"
-                    color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"
-                else:
-                    confiance_pure_key = final_key
-                    avis_expert = "✅ CONSONANCE GLOBALE"
-                    color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
-
-            # ── RÈGLE D : Fallback — consonance globale par défaut ──
-            else:
-                confiance_pure_key = final_key
-                avis_expert = "✅ ANALYSE STABLE"
-                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"
+        # ══════════════════════════════════════════════════════════════════════════
 
         # ══════════════════════════════════════════════════════════════════════════
 
