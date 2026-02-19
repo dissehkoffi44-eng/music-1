@@ -460,11 +460,14 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V8.6 (SEUIL SENSIBLE 75%) ---
+        # --- MOTEUR DE DÉCISION SNIPER V9.0 (OPTIMISÉ PAR PUISSANCE) ---
         # ══════════════════════════════════════════════════════════════════════════
 
-        # ÉTAPE 0 : On prépare les conditions de duel et de temps
-        # Le duel s'active désormais dès que les deux candidats atteignent 75%
+        # ÉTAPE 0 : Calcul des scores de puissance (Confiance × √Présence)
+        final_power = min(final_conf, 99) * np.sqrt(final_percentage)
+        dom_power   = dominant_conf * np.sqrt(dominant_percentage)
+
+        # ÉTAPE 1 : Arbitrage harmonique (duel de voisins Camelot)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
             decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
@@ -478,40 +481,27 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Pivot de Voisinage)
         if decision_pivot:
             confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Duel Certifié 75%)"
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Duel Certifié)"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
 
-        # 2️⃣ PRIORITÉ 2 : SAUVETAGE DOMINANTE (Consonance faible < 75%)
-        elif dominant_conf >= 75 and final_conf < 75 and dominant_percentage >= 30.0:
+        # 2️⃣ PRIORITÉ 2 : DÉCISION PAR PUISSANCE
+        # La dominante gagne si elle est ≥ 20% plus puissante que la consonance
+        elif dom_power > (final_power * 1.2):
             confiance_pure_key = dominant_key
-            avis_expert = f"🛡️ SAUVETAGE DOMINANTE ({round(dominant_conf, 1)}%)"
+            avis_expert = f"🛡️ DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
 
-        # 3️⃣ PRIORITÉ 3 : ACCORD PARFAIT (Stabilité à 85%)
-        elif final_key == dominant_key and dominant_conf >= 85:
-            confiance_pure_key = final_key
-            avis_expert = f"💎 ACCORD PARFAIT ({round(dominant_conf, 1)}%)"
-            color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)" # Vert Émeraude
-
-        # 4️⃣ PRIORITÉ 4 : MODULATION ÉCLAIR (< 30s depuis section harmonique)
+        # 3️⃣ PRIORITÉ 3 : MODULATION ÉCLAIR (< 30s depuis section harmonique)
         elif mod_detected and ends_in_target and target_percentage >= 25.0 and not mod_is_too_late:
             confiance_pure_key = target_key
             avis_expert = f"🏁 MODULATION ÉCLAIR (@ {seconds_to_mmss(modulation_time)})"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Rouge/Violet
 
-        # 5️⃣ PRIORITÉ 5 : VERROU DE CONFIANCE (99%)
-        elif final_conf >= 99:
-            confiance_pure_key = final_key
-            avis_expert = "🔒 VERROU DE CONFIANCE (99%)"
-            color_bandeau = "linear-gradient(135deg, #064e3b, #022c22)" # Vert Sombre
-
-        # 6️⃣ FALLBACK : ANALYSE STABLE
+        # 4️⃣ FALLBACK : CONSONANCE STABLE
         else:
             confiance_pure_key = final_key
             avis_expert = "✅ ANALYSE STABLE"
             color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)" # Vert Classique
-
-        # ══════════════════════════════════════════════════════════════════════════
 
         # ══════════════════════════════════════════════════════════════════════════
 
