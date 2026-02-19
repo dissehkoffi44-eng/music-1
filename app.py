@@ -98,43 +98,29 @@ st.markdown("""
 
 def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
     """
-    Arbitrage universel pour TOUS les voisins de la roue Camelot.
-    Couvre les 24 duels mineurs (A) et majeurs (B) via la logique des pivots musicaux (quintes).
-    La note pivot est celle qui appartient à l'une des tonalités mais est interdite dans l'autre.
+    Arbitrage exhaustif pour TOUS les voisins de la roue Camelot.
     """
-    # 1. Extraction des notes les plus fortes du signal traité
-    top_notes_indices = np.argsort(chroma_global)[-5:]
-    top_notes = [NOTES_LIST[i] for i in top_notes_indices]
+    # Extraction des notes les plus fortes
+    idx = np.argsort(chroma_global)[-5:]
+    top_notes = [NOTES_LIST[i] for i in idx]
 
-    # 2. Dictionnaire exhaustif des pivots de transition (Quintes)
-    # Chaque entrée associe une note pivot à la tonalité Camelot qu'elle désigne comme gagnante.
+    # Dictionnaire complet de tous les pivots de la roue (Quintes)
     pivots = {
         # --- MINEURS (A) ---
-        '1A_vs_2A':   {'A': '1A', 'A#': '2A'},
-        '2A_vs_3A':   {'E': '2A', 'F': '3A'},
-        '3A_vs_4A':   {'B': '3A', 'C': '4A'},
-        '4A_vs_5A':   {'F#': '4A', 'G': '5A'},
-        '5A_vs_6A':   {'C#': '5A', 'D': '6A'},
-        '6A_vs_7A':   {'G#': '6A', 'A': '7A'},
-        '7A_vs_8A':   {'D#': '7A', 'E': '8A'},  # <-- CAS SUNGBA (Dm vs Am)
-        '8A_vs_9A':   {'A#': '8A', 'B': '9A'},
-        '9A_vs_10A':  {'F': '9A', 'F#': '10A'},
-        '10A_vs_11A': {'C': '10A', 'C#': '11A'},
-        '11A_vs_12A': {'G': '11A', 'G#': '12A'},
-        '12A_vs_1A':  {'D': '12A', 'D#': '1A'},
+        '1A_vs_2A':   {'G#': '1A',  'A#': '2A'},  '2A_vs_3A':   {'D#': '2A',  'F':  '3A'},
+        '3A_vs_4A':   {'A#': '3A',  'C':  '4A'},  '4A_vs_5A':   {'F':  '4A',  'G':  '5A'},
+        '5A_vs_6A':   {'C':  '5A',  'D':  '6A'},  '6A_vs_7A':   {'G':  '6A',  'A':  '7A'},
+        '7A_vs_8A':   {'D':  '7A',  'E':  '8A'},  # <-- RÉPARE SUNGBA (Dm vs Am)
+        '8A_vs_9A':   {'A':  '8A',  'B':  '9A'},  '9A_vs_10A':  {'E':  '9A',  'F#': '10A'},
+        '10A_vs_11A': {'B':  '10A', 'C#': '11A'}, '11A_vs_12A': {'F#': '11A', 'G#': '12A'},
+        '12A_vs_1A':  {'C#': '12A', 'D#': '1A'},
         # --- MAJEURS (B) ---
-        '1B_vs_2B':   {'E': '1B', 'F#': '2B'},
-        '2B_vs_3B':   {'B': '2B', 'C#': '3B'},
-        '3B_vs_4B':   {'F': '3B', 'G#': '4B'},
-        '4B_vs_5B':   {'C#': '4B', 'D#': '5B'},
-        '5B_vs_6B':   {'G#': '5B', 'A#': '6B'},
-        '6B_vs_7B':   {'D#': '6B', 'F': '7B'},
-        '7B_vs_8B':   {'A#': '7B', 'C': '8B'},
-        '8B_vs_9B':   {'E': '8B', 'G': '9B'},
-        '9B_vs_10B':  {'B': '9B', 'D': '10B'},
-        '10B_vs_11B': {'F#': '10B', 'A': '11B'},
-        '11B_vs_12B': {'C#': '11B', 'E': '12B'},
-        '12B_vs_1B':  {'G#': '12B', 'B': '1B'},
+        '1B_vs_2B':   {'B':  '1B',  'C#': '2B'},  '2B_vs_3B':   {'F#': '2B',  'G#': '3B'},
+        '3B_vs_4B':   {'C#': '3B',  'D#': '4B'},  '4B_vs_5B':   {'G#': '4B',  'A#': '5B'},
+        '5B_vs_6B':   {'D#': '5B',  'F':  '6B'},  '6B_vs_7B':   {'A#': '6B',  'C':  '7B'},
+        '7B_vs_8B':   {'F':  '7B',  'G':  '8B'},  '8B_vs_9B':   {'C':  '8B',  'D':  '9B'},
+        '9B_vs_10B':  {'G':  '9B',  'A':  '10B'}, '10B_vs_11B': {'D':  '10B', 'E':  '11B'},
+        '11B_vs_12B': {'A':  '11B', 'B':  '12B'}, '12B_vs_1B':  {'E':  '12B', 'F#': '1B'},
     }
 
     cam_a = key_to_camelot_map.get(key_a)
@@ -150,10 +136,10 @@ def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
     if duel:
         for note_p, winner_camelot in duel.items():
             if note_p in top_notes:
-                # Retourne le nom complet de la tonalité gagnante (ex: "D minor")
-                for long_name, cam_code in key_to_camelot_map.items():
-                    if cam_code == winner_camelot:
-                        return long_name
+                # Retrouver le nom long (ex: "A minor")
+                for name, code in key_to_camelot_map.items():
+                    if code == winner_camelot:
+                        return name
 
     return None
 
