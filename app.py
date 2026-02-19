@@ -412,6 +412,10 @@ def process_audio(audio_file, file_name, progress_placeholder):
         dominant_votes = most_common[0][1] if most_common else 0
         dominant_percentage = (dominant_votes / total_votes * 100) if total_votes > 0 else 0
         dominant_conf = int(get_key_score(dominant_key, chroma_avg, bass_global) * 100) if dominant_key != "Unknown" else 0
+
+        # Étape A : Calcul de la présence de la clé retenue par l'algorithme (Consonance)
+        final_vote_count = votes.get(final_key, 0)
+        final_percentage = (final_vote_count / total_votes * 100) if total_votes > 0 else 0
         dominant_camelot = CAMELOT_MAP.get(dominant_key, "??")
 
         mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
@@ -525,6 +529,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "target_conf": target_conf,
             "dominant_key": dominant_key, "dominant_camelot": dominant_camelot,
             "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1),
+            "key_presence": round(final_percentage, 1),
             "confiance_pure": confiance_pure_key,
             "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
             "avis_expert": avis_expert,
@@ -558,7 +563,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"📂 *FICHIER:* `{file_name}`\n"
                     f"🎹 *MEILLEURE CONSONANCE:* `{final_key.upper()} ({res_obj['camelot']})`"
-                    f" | *PRÉSENCE:* `{res_obj['dominant_percentage']}%`"
+                    f" | *PRÉSENCE:* `{res_obj['key_presence']}%`"
                     f" | *CONFIANCE:* `{res_obj['conf']}%`"
                     + dom_line
                     + pure_line
@@ -704,7 +709,7 @@ if uploaded_files:
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
                         <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
-                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['conf']}%
+                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data['key_presence']}% | CONFIANCE {analysis_data['conf']}%
                             &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['dominant_conf']}%
                         </p>
                         {mod_alert}
