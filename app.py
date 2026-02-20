@@ -466,20 +466,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V10.0 (POWER SCORE + ARBITRAGE EXPERT) ---
+        # --- MOTEUR DE DÉCISION SNIPER V11.0 (POWER-FIRST) ---
         # ══════════════════════════════════════════════════════════════════════════
 
-        # ÉTAPE 0 : Calcul des Forces Harmoniques (Power Score = Confiance × √Présence)
-        final_power = min(final_conf, 99) * np.sqrt(final_percentage)
-        dom_power   = dominant_conf * np.sqrt(dominant_percentage)
-        # Ratio de force pour la Priorité 2
+        # --- CALCULS DE FORCE ET TEMPS DYNAMIQUE ---
+        total_duration    = duration  # durée totale du fichier audio
+        dynamic_threshold = min(total_duration * 0.20, 60)  # 20% du morceau, max 60s
+        # Power Score = Confiance × √Présence (variables brutes, res_obj pas encore créé)
+        final_power = min(final_conf, 99) * np.sqrt(max(final_percentage, 0))
+        dom_power   = dominant_conf       * np.sqrt(max(dominant_percentage, 0))
         power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # ÉTAPE 0b : Seuil de modulation dynamique (20% du morceau, max 60s)
-        total_duration = duration  # durée totale du fichier audio
-        dynamic_threshold = min(total_duration * 0.20, 60)
-
-        # ÉTAPE 1 : Arbitrage harmonique enrichi (Test Spectral + Power Score si indécision)
+        # Pré-calcul de l'arbitrage voisins (Test Spectral + Power Score si indécision)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
             decision_pivot = arbitrage_pivots_voisins(
@@ -488,36 +486,38 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 conf_b=dominant_conf,       pres_b=dominant_percentage
             )
 
-        # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Pivot Spectral + Power Score)
-        if decision_pivot:
-            confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE (Pivot + Power Score)"
-            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
-
-        # 2️⃣ PRIORITÉ 2 : FORCE ÉCRASANTE (Hors voisins — ratio ≥ 1.15)
-        elif power_ratio > 1.15:
+        # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
+        # Déclenché si la dominante écrase la consonance (ratio > 1.25)
+        # OU si ce sont des voisins et que la dominante est plus solide (ratio > 1.10)
+        if power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
             confiance_pure_key = dominant_key
-            avis_expert = f"🛡️ DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
-            color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
+            avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
+            color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
 
-        # 3️⃣ PRIORITÉ 3 : MODULATION INTELLIGENTE (PROPORTIONNELLE)
-        elif mod_detected and ends_in_target and target_percentage >= 25.0:
-            if modulation_time is not None and modulation_time <= dynamic_threshold:
-                # Modulation dans le premier 20% du morceau → on la valide
-                confiance_pure_key = target_key
-                avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
-                color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)" # Violet
-            else:
-                # Modulation trop tardive → on reste sur la dominante initiale
-                confiance_pure_key = dominant_key
-                avis_expert = "🔄 MODULATION TARDIVE (Ignorée)"
-                color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
+        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Spectral — Power Score non décisif)
+        elif decision_pivot:
+            confiance_pure_key = decision_pivot
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
-        # 4️⃣ FALLBACK : CONSONANCE STABLE
+        # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
+        elif (mod_detected and ends_in_target and target_percentage >= 25.0
+              and modulation_time is not None and modulation_time <= dynamic_threshold):
+            confiance_pure_key = target_key
+            avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
+            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"  # Violet
+
+        # 💎 PRIORITÉ 3 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
+        elif final_key == dominant_key and final_conf >= 85:
+            confiance_pure_key = final_key
+            avis_expert = "💎 ACCORD PARFAIT"
+            color_bandeau = "linear-gradient(135deg, #059669, #064e3b)"  # Vert Émeraude
+
+        # ✅ FALLBACK : ANALYSE STABLE
         else:
             confiance_pure_key = final_key
             avis_expert = "✅ ANALYSE STABLE"
-            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)" # Vert Classique
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert Classique
 
         # ══════════════════════════════════════════════════════════════════════════
 
@@ -537,6 +537,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "dominant_conf": dominant_conf, "dominant_percentage": round(dominant_percentage, 1),
             "key_presence": round(final_percentage, 1),
             "duration_detected": round(total_duration, 1),
+            "final_power": round(final_power, 1),
+            "dom_power": round(dom_power, 1),
+            "power_ratio": round(power_ratio, 2),
             "confiance_pure": confiance_pure_key,
             "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
             "avis_expert": avis_expert,
@@ -731,6 +734,17 @@ if uploaded_files:
                         <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
                         <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                     """, height=110)
+
+                # --- POWER SCORES (debug & transparence) ---
+                ps1, ps2, ps3 = st.columns(3)
+                with ps1:
+                    st.markdown(f"<div class='metric-box'><b>💪 FORCE CONSONANCE</b><br><span style='font-size:1.6em; color:#a78bfa;'>{analysis_data.get('final_power', '—')}</span></div>", unsafe_allow_html=True)
+                with ps2:
+                    st.markdown(f"<div class='metric-box'><b>💪 FORCE DOMINANTE</b><br><span style='font-size:1.6em; color:#a78bfa;'>{analysis_data.get('dom_power', '—')}</span></div>", unsafe_allow_html=True)
+                with ps3:
+                    ratio_val = analysis_data.get('power_ratio', 0)
+                    ratio_color = "#ef4444" if ratio_val > 1.25 else "#f59e0b" if ratio_val > 1.10 else "#10b981"
+                    st.markdown(f"<div class='metric-box'><b>📊 RATIO DE PUISSANCE</b><br><span style='font-size:1.6em; color:{ratio_color};'>{ratio_val}</span></div>", unsafe_allow_html=True)
 
                 c1, c2 = st.columns([2, 1])
                 with c1:
