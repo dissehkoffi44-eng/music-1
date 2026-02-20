@@ -98,18 +98,21 @@ st.markdown("""
 
 def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
     """
-    Arbitrage Expert Universel v11 — Juge de Paix Spectral.
+    Arbitrage Expert Universel v12 — Juge de Paix Spectral (Quinte + Tierce).
 
-    Remplace arbitrage_pivots_voisins (v10) en étendant la couverture aux zones
-    de duel directes ET diagonales du Camelot Wheel (dist <= 1 en valeur circulaire,
-    tous modes confondus).
+    Étend la couverture de l'arbitrage à toutes les paires de clés voisines
+    sur le Camelot Wheel, incluant :
+      - Voisins directs  (dist_num=1, même mode)
+      - Relatifs         (dist_num=0, modes croisés A↔B)
+      - Diagonaux        (dist_num=1, modes croisés)
 
     Algorithme :
-      1. Distance Camelot circulaire calculée (max 6 sur 12).
-      2. Si dist <= 1 (voisin direct ou diagonal) : duel spectral des quintes.
-         - La quinte dominante doit surpasser la consonante d'au moins 8 % pour l'emporter.
+      1. Distance numérique circulaire (0-6) + distance de mode (0 ou 1).
+      2. Si dist_num <= 1 ET dist_mode <= 1 : duel spectral Quinte/Tierce pondéré.
+         - Force harmonique = (quinte × 0.6) + (tierce × 0.4)
+         - La dominante gagne si sa force dépasse la consonante de 10 %.
          - Sinon, la consonance est conservée (biais de stabilité).
-      3. Si dist > 1 (clés éloignées) : pas d'arbitrage, consonance par défaut.
+      3. Si hors zone de duel : consonance par défaut.
 
     Paramètres
     ----------
@@ -129,25 +132,35 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
     if not cam_c or not cam_d:
         return key_cons
 
+    # Extraction des coordonnées Camelot
     val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
     val_d, mode_d = int(cam_d[:-1]), cam_d[-1]
 
-    # Distance Camelot circulaire (roue de 12 positions)
-    dist = abs(val_c - val_d)
-    if dist > 6:
-        dist = 12 - dist
+    # Distance numérique circulaire (roue de 12 positions, max 6)
+    dist_num = abs(val_c - val_d)
+    if dist_num > 6:
+        dist_num = 12 - dist_num
 
-    # --- ZONE DE DUEL : voisin direct (même mode) ou diagonal (mode croisé) ---
-    if dist <= 1:
+    # Distance de mode (0 = même mode A/A ou B/B, 1 = modes croisés A/B)
+    dist_mode = 0 if mode_c == mode_d else 1
+
+    # --- ZONE DE DUEL UNIVERSELLE ---
+    # Couvre : voisins directs, relatifs (enharmoniques de mode) et diagonaux
+    if dist_num <= 1 and dist_mode <= 1:
         idx_c = NOTES_LIST.index(key_cons.split()[0])
         idx_d = NOTES_LIST.index(key_dom.split()[0])
 
-        # Force spectrale des quintes respectives (+7 demi-tons)
-        force_q_cons = chroma[(idx_c + 7) % 12]
-        force_q_dom  = chroma[(idx_d + 7) % 12]
+        def get_harmonic_strength(idx, mode, chroma_vec):
+            """Force harmonique pondérée : Quinte (60%) + Tierce (40%)."""
+            quinte = chroma_vec[(idx + 7) % 12]
+            tierce = chroma_vec[(idx + 3) % 12] if mode == 'minor' else chroma_vec[(idx + 4) % 12]
+            return (quinte * 0.6) + (tierce * 0.4)
 
-        # La dominante doit l'emporter avec une marge de 8 % pour éviter le bruit
-        if force_q_dom > force_q_cons * 1.08:
+        force_c = get_harmonic_strength(idx_c, key_cons.split()[1], chroma)
+        force_d = get_harmonic_strength(idx_d, key_dom.split()[1], chroma)
+
+        # La dominante gagne si elle est spectralement plus claire d'au moins 10 %
+        if force_d > force_c * 1.10:
             return key_dom
 
     # Par défaut : la Consonance reste la clé retenue
