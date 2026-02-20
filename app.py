@@ -484,15 +484,20 @@ def process_audio(audio_file, file_name, progress_placeholder):
         dom_power   = raw_dominant_conf * np.sqrt(max(dominant_percentage, 0))
         power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # --- SÉCURITÉ ANTI-ERREUR STATISTIQUE ---
-        # Bascule automatique si la consonance est statistiquement absurde
-        # (confiance négative, ou dominante écrasante en confiance ET en présence)
-        if (final_conf < 0) or (dominant_conf > final_conf + 40 and dominant_percentage > final_percentage * 3):
+        # --- SÉCURITÉ ANTI-ERREUR STATISTIQUE (VERSION BLINDÉE) ---
+        # RÈGLE 1 : Si la clé retenue est un "fantôme" (présence < 5%) et qu'une dominante existe.
+        est_fantome = (final_percentage < 5.0 and dominant_percentage > 20.0)
+
+        # RÈGLE 2 : Si la dominante est statistiquement écrasante (Ratio de puissance > 1.5).
+        domination_statistique = (power_ratio > 1.5)
+
+        # Application de la bascule de sécurité
+        if (final_conf < 0) or est_fantome or domination_statistique:
             final_key        = dominant_key
             final_conf       = dominant_conf
-            raw_final_conf   = dominant_conf  # Synchro valeur brute après bascule
+            raw_final_conf   = dominant_conf
             final_percentage = dominant_percentage
-            # Recalcul du Power Score avec les nouvelles valeurs
+            # Recalcul des scores de puissance pour l'affichage
             final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
