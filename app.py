@@ -506,9 +506,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
         # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v11)
-        # Seuil abaissé à 70 % pour élargir la zone de duel harmonique.
         decision_pivot = None
-        if final_conf >= 70 and dominant_conf >= 70:
+        if final_conf >= 75 and dominant_conf >= 75:
             decision_pivot = arbitrage_expert_universel(
                 chroma_avg, final_key, dominant_key, CAMELOT_MAP
             )
@@ -517,20 +516,19 @@ def process_audio(audio_file, file_name, progress_placeholder):
             if decision_pivot == final_key:
                 decision_pivot = None
 
-        # ⚖️ PRIORITÉ 0 : ARBITRAGE HARMONIQUE (Spectral — juge de paix des voisins Camelot)
-        # Passe en premier : le spectre prime sur le Power Score pour les clés proches.
-        if decision_pivot:
-            final_key          = decision_pivot
-            confiance_pure_key = decision_pivot
-            avis_expert        = "⚖️ ARBITRAGE HARMONIQUE"
-            color_bandeau      = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
-
-        # ⚡ PRIORITÉ 1 : LA FORCE SUPRÊME (Power Score — seuil abaissé à 1.10)
-        elif power_ratio > 1.10:
-            final_key          = dominant_key
+        # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
+        # Déclenché si la dominante écrase la consonance (ratio > 1.25)
+        # OU si ce sont des voisins et que la dominante est plus solide (ratio > 1.10)
+        if power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
             confiance_pure_key = dominant_key
-            avis_expert        = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
-            color_bandeau      = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
+            avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
+            color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
+
+        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Spectral — Power Score non décisif)
+        elif decision_pivot:
+            confiance_pure_key = decision_pivot
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
         # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
         elif (mod_detected and ends_in_target and target_percentage >= 25.0
