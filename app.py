@@ -96,52 +96,58 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map):
+def obtenir_force_pivot(key, chroma):
     """
-    Arbitrage UNIVERSEL : Calcule automatiquement la note pivot
-    pour n'importe quel duo de voisins sur la roue.
+    Retourne la force spectrale de la quinte d'une clé dans le vecteur chroma.
+    Utilisé comme test spectral dans l'arbitrage v10.
     """
-    # 1. Extraction des notes les plus fortes (Top 3 pour plus de précision)
-    idx = np.argsort(chroma_global)[-3:]
-    top_notes = [NOTES_LIST[i] for i in idx]
+    note = key.split()[0]
+    root_idx   = NOTES_LIST.index(note)
+    quinte_idx = (root_idx + 7) % 12
+    return float(chroma[quinte_idx])
 
+
+def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map,
+                              conf_a=None, pres_a=None, conf_b=None, pres_b=None):
+    """
+    Arbitrage Expert v10 : Test Spectral (quintes) + Power Score si indecision.
+    Compatible retro : si conf/pres non fournis, on utilise uniquement le test spectral.
+    """
     cam_a = key_to_camelot_map.get(key_a)
     cam_b = key_to_camelot_map.get(key_b)
     if not cam_a or not cam_b:
         return None
 
-    # 2. Vérification du voisinage (ex: 7A et 8A ou 12A et 1A)
+    # Verification du voisinage Camelot (ex: 7A/8A ou 12A/1A)
     val_a  = int(cam_a[:-1])
     val_b  = int(cam_b[:-1])
     mode_a = cam_a[-1]
     mode_b = cam_b[-1]
 
-    # Calcul de la distance sur la roue (gestion du 12 -> 1)
     dist = abs(val_a - val_b)
     is_neighbor = (dist == 1 or dist == 11) and (mode_a == mode_b)
 
-    if is_neighbor:
-        # Trouver quelle clé est la plus haute sur la roue (ex: 8A est plus haut que 7A)
-        # Attention au cas 12/1 : 1 est "plus haut" harmoniquement que 12
-        if dist == 11:
-            higher_key = key_a if (val_a == 1) else key_b
+    if not is_neighbor:
+        return None
+
+    # --- TEST SPECTRAL : force des quintes respectives dans le chroma ---
+    pivot_a_val = obtenir_force_pivot(key_a, chroma_global)
+    pivot_b_val = obtenir_force_pivot(key_b, chroma_global)
+    diff_spectral = abs(pivot_a_val - pivot_b_val)
+    seuil_indecision = 0.10  # 10% d'ecart minimum pour trancher spectralement
+
+    if diff_spectral > seuil_indecision:
+        # L'ecart spectral est net -> le spectre tranche seul
+        return key_a if pivot_a_val > pivot_b_val else key_b
+    else:
+        # Indecision spectrale -> Power Score (Confiance x racine(Presence)) tranche
+        if conf_a is not None and pres_a is not None and conf_b is not None and pres_b is not None:
+            power_a = conf_a * np.sqrt(max(pres_a, 0))
+            power_b = conf_b * np.sqrt(max(pres_b, 0))
+            return key_a if power_a >= power_b else key_b
         else:
-            higher_key = key_a if (val_a > val_b) else key_b
-
-        # 3. La règle d'or : La note pivot est la QUINTE de la clé la plus haute
-        note_nom   = higher_key.split()[0]
-        root_idx   = NOTES_LIST.index(note_nom)
-        quinte_idx = (root_idx + 7) % 12
-        note_pivot = NOTES_LIST[quinte_idx]
-
-        # 4. Si la quinte de la clé haute est dans le Top Notes -> Elle gagne
-        if note_pivot in top_notes:
-            return higher_key
-        else:
-            # Sinon, on reste sur la clé la plus basse
-            return key_a if higher_key == key_b else key_b
-
-    return None
+            # Fallback sans donnees de puissance
+            return key_a if pivot_a_val >= pivot_b_val else key_b
 
 def seconds_to_mmss(seconds):
     if seconds is None:
@@ -460,31 +466,36 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V9.5 (MODULATION PROPORTIONNELLE) ---
+        # --- MOTEUR DE DÉCISION SNIPER V10.0 (POWER SCORE + ARBITRAGE EXPERT) ---
         # ══════════════════════════════════════════════════════════════════════════
 
-        # ÉTAPE 0 : Calcul des scores de puissance (Confiance × √Présence)
+        # ÉTAPE 0 : Calcul des Forces Harmoniques (Power Score = Confiance × √Présence)
         final_power = min(final_conf, 99) * np.sqrt(final_percentage)
         dom_power   = dominant_conf * np.sqrt(dominant_percentage)
+        # Ratio de force pour la Priorité 2
+        power_ratio = dom_power / final_power if final_power > 0 else 0
 
         # ÉTAPE 0b : Seuil de modulation dynamique (20% du morceau, max 60s)
         total_duration = duration  # durée totale du fichier audio
         dynamic_threshold = min(total_duration * 0.20, 60)
 
-        # ÉTAPE 1 : Arbitrage harmonique (duel de voisins Camelot)
+        # ÉTAPE 1 : Arbitrage harmonique enrichi (Test Spectral + Power Score si indécision)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
-            decision_pivot = arbitrage_pivots_voisins(chroma_avg, final_key, dominant_key, CAMELOT_MAP)
+            decision_pivot = arbitrage_pivots_voisins(
+                chroma_avg, final_key, dominant_key, CAMELOT_MAP,
+                conf_a=min(final_conf, 99), pres_a=final_percentage,
+                conf_b=dominant_conf,       pres_b=dominant_percentage
+            )
 
-        # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Pivot de Voisinage)
+        # 1️⃣ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Pivot Spectral + Power Score)
         if decision_pivot:
             confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (Duel Certifié)"
+            avis_expert = "⚖️ ARBITRAGE (Pivot + Power Score)"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)" # Bleu Océan
 
-        # 2️⃣ PRIORITÉ 2 : DÉCISION PAR PUISSANCE
-        # La dominante gagne si elle est ≥ 20% plus puissante que la consonance
-        elif dom_power > (final_power * 1.2):
+        # 2️⃣ PRIORITÉ 2 : FORCE ÉCRASANTE (Hors voisins — ratio ≥ 1.15)
+        elif power_ratio > 1.15:
             confiance_pure_key = dominant_key
             avis_expert = f"🛡️ DOMINANTE ÉCRASANTE ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #1e3a8a, #1e40af)" # Bleu Intense
