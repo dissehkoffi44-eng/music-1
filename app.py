@@ -563,11 +563,18 @@ def process_audio(audio_file, file_name, progress_placeholder):
             avis_expert = "💎 ACCORD PARFAIT"
             color_bandeau = "linear-gradient(135deg, #059669, #064e3b)"  # Vert Émeraude
 
-        # ✅ FALLBACK : ANALYSE STABLE
+        # ✅ FALLBACK : ANALYSE STABLE (Avec Test de Légitimité Power Score)
         else:
-            confiance_pure_key = final_key
-            avis_expert = "✅ ANALYSE STABLE"
-            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert Classique
+            # On compare les forces brutes (Confiance × √Présence)
+            # Si la Dominante est 15% plus puissante, elle détrône la Consonance
+            if dom_power > (final_power * 1.15):
+                confiance_pure_key = dominant_key
+                avis_expert = f"✅ STABILITÉ DOMINANTE ({round(dominant_percentage, 1)}%)"
+                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
+            else:
+                confiance_pure_key = final_key
+                avis_expert = "✅ ANALYSE STABLE"
+                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
 
         # ══════════════════════════════════════════════════════════════════════════
 
