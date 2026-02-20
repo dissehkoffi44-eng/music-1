@@ -96,58 +96,62 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def obtenir_force_pivot(key, chroma):
+def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
     """
-    Retourne la force spectrale de la quinte d'une clé dans le vecteur chroma.
-    Utilisé comme test spectral dans l'arbitrage v10.
+    Arbitrage Expert Universel v11 — Juge de Paix Spectral.
+
+    Remplace arbitrage_pivots_voisins (v10) en étendant la couverture aux zones
+    de duel directes ET diagonales du Camelot Wheel (dist <= 1 en valeur circulaire,
+    tous modes confondus).
+
+    Algorithme :
+      1. Distance Camelot circulaire calculée (max 6 sur 12).
+      2. Si dist <= 1 (voisin direct ou diagonal) : duel spectral des quintes.
+         - La quinte dominante doit surpasser la consonante d'au moins 8 % pour l'emporter.
+         - Sinon, la consonance est conservée (biais de stabilité).
+      3. Si dist > 1 (clés éloignées) : pas d'arbitrage, consonance par défaut.
+
+    Paramètres
+    ----------
+    chroma   : np.ndarray — vecteur chroma global (12 valeurs normalisées).
+    key_cons : str — clé Consonance (ex. "A minor").
+    key_dom  : str — clé Dominante (ex. "E minor").
+    cam_map  : dict — mapping clé → Camelot (ex. CAMELOT_MAP).
+
+    Retourne
+    --------
+    str — la clé gagnante, ou key_cons si aucun arbitrage n'est possible.
     """
-    note = key.split()[0]
-    root_idx   = NOTES_LIST.index(note)
-    quinte_idx = (root_idx + 7) % 12
-    return float(chroma[quinte_idx])
+    cam_c = cam_map.get(key_cons)
+    cam_d = cam_map.get(key_dom)
 
+    # Garde-fou : clés inconnues du référentiel Camelot → pas d'arbitrage
+    if not cam_c or not cam_d:
+        return key_cons
 
-def arbitrage_pivots_voisins(chroma_global, key_a, key_b, key_to_camelot_map,
-                              conf_a=None, pres_a=None, conf_b=None, pres_b=None):
-    """
-    Arbitrage Expert v10 : Test Spectral (quintes) + Power Score si indecision.
-    Compatible retro : si conf/pres non fournis, on utilise uniquement le test spectral.
-    """
-    cam_a = key_to_camelot_map.get(key_a)
-    cam_b = key_to_camelot_map.get(key_b)
-    if not cam_a or not cam_b:
-        return None
+    val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
+    val_d, mode_d = int(cam_d[:-1]), cam_d[-1]
 
-    # Verification du voisinage Camelot (ex: 7A/8A ou 12A/1A)
-    val_a  = int(cam_a[:-1])
-    val_b  = int(cam_b[:-1])
-    mode_a = cam_a[-1]
-    mode_b = cam_b[-1]
+    # Distance Camelot circulaire (roue de 12 positions)
+    dist = abs(val_c - val_d)
+    if dist > 6:
+        dist = 12 - dist
 
-    dist = abs(val_a - val_b)
-    is_neighbor = (dist == 1 or dist == 11) and (mode_a == mode_b)
+    # --- ZONE DE DUEL : voisin direct (même mode) ou diagonal (mode croisé) ---
+    if dist <= 1:
+        idx_c = NOTES_LIST.index(key_cons.split()[0])
+        idx_d = NOTES_LIST.index(key_dom.split()[0])
 
-    if not is_neighbor:
-        return None
+        # Force spectrale des quintes respectives (+7 demi-tons)
+        force_q_cons = chroma[(idx_c + 7) % 12]
+        force_q_dom  = chroma[(idx_d + 7) % 12]
 
-    # --- TEST SPECTRAL : force des quintes respectives dans le chroma ---
-    pivot_a_val = obtenir_force_pivot(key_a, chroma_global)
-    pivot_b_val = obtenir_force_pivot(key_b, chroma_global)
-    diff_spectral = abs(pivot_a_val - pivot_b_val)
-    seuil_indecision = 0.10  # 10% d'ecart minimum pour trancher spectralement
+        # La dominante doit l'emporter avec une marge de 8 % pour éviter le bruit
+        if force_q_dom > force_q_cons * 1.08:
+            return key_dom
 
-    if diff_spectral > seuil_indecision:
-        # L'ecart spectral est net -> le spectre tranche seul
-        return key_a if pivot_a_val > pivot_b_val else key_b
-    else:
-        # Indecision spectrale -> Power Score (Confiance x racine(Presence)) tranche
-        if conf_a is not None and pres_a is not None and conf_b is not None and pres_b is not None:
-            power_a = conf_a * np.sqrt(max(pres_a, 0))
-            power_b = conf_b * np.sqrt(max(pres_b, 0))
-            return key_a if power_a >= power_b else key_b
-        else:
-            # Fallback sans donnees de puissance
-            return key_a if pivot_a_val >= pivot_b_val else key_b
+    # Par défaut : la Consonance reste la clé retenue
+    return key_cons
 
 def seconds_to_mmss(seconds):
     if seconds is None:
@@ -466,7 +470,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V11.0 (POWER-FIRST) ---
+        # --- MOTEUR DE DÉCISION SNIPER V12.0 (ARBITRAGE UNIVERSEL + POWER-FIRST) ---
         # ══════════════════════════════════════════════════════════════════════════
 
         # --- CALCULS DE FORCE ET TEMPS DYNAMIQUE ---
@@ -501,14 +505,16 @@ def process_audio(audio_file, file_name, progress_placeholder):
             final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # Pré-calcul de l'arbitrage voisins (Test Spectral + Power Score si indécision)
+        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v11)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
-            decision_pivot = arbitrage_pivots_voisins(
-                chroma_avg, final_key, dominant_key, CAMELOT_MAP,
-                conf_a=raw_final_conf, pres_a=final_percentage,
-                conf_b=raw_dominant_conf, pres_b=dominant_percentage
+            decision_pivot = arbitrage_expert_universel(
+                chroma_avg, final_key, dominant_key, CAMELOT_MAP
             )
+            # Si l'arbitrage renvoie la consonance elle-même, on neutralise
+            # (pas de déclenchement de la branche ARBITRAGE HARMONIQUE)
+            if decision_pivot == final_key:
+                decision_pivot = None
 
         # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
         # Déclenché si la dominante écrase la consonance (ratio > 1.25)
