@@ -472,18 +472,37 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # --- CALCULS DE FORCE ET TEMPS DYNAMIQUE ---
         total_duration    = duration  # durée totale du fichier audio
         dynamic_threshold = min(total_duration * 0.20, 60)  # 20% du morceau, max 60s
-        # Power Score = Confiance × √Présence (variables brutes, res_obj pas encore créé)
-        final_power = min(final_conf, 99) * np.sqrt(max(final_percentage, 0))
-        dom_power   = dominant_conf       * np.sqrt(max(dominant_percentage, 0))
+
+        # --- AVANT (Calcul bridé) ---
+        # final_power = min(final_conf, 99) * np.sqrt(max(final_percentage, 0))
+        # --- APRÈS (Calcul libre pour le Power Score) ---
+        # On garde la valeur brute pour le calcul de puissance (sans plafond)
+        raw_final_conf    = final_conf
+        raw_dominant_conf = dominant_conf
+        # Power Score = Confiance brute × √Présence (sans plafond → arbitrage équitable)
+        final_power = raw_final_conf    * np.sqrt(max(final_percentage, 0))
+        dom_power   = raw_dominant_conf * np.sqrt(max(dominant_percentage, 0))
         power_ratio = dom_power / final_power if final_power > 0 else 0
+
+        # --- SÉCURITÉ ANTI-ERREUR STATISTIQUE ---
+        # Bascule automatique si la consonance est statistiquement absurde
+        # (confiance négative, ou dominante écrasante en confiance ET en présence)
+        if (final_conf < 0) or (dominant_conf > final_conf + 40 and dominant_percentage > final_percentage * 3):
+            final_key        = dominant_key
+            final_conf       = dominant_conf
+            raw_final_conf   = dominant_conf  # Synchro valeur brute après bascule
+            final_percentage = dominant_percentage
+            # Recalcul du Power Score avec les nouvelles valeurs
+            final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
+            power_ratio = dom_power / final_power if final_power > 0 else 0
 
         # Pré-calcul de l'arbitrage voisins (Test Spectral + Power Score si indécision)
         decision_pivot = None
         if final_conf >= 75 and dominant_conf >= 75:
             decision_pivot = arbitrage_pivots_voisins(
                 chroma_avg, final_key, dominant_key, CAMELOT_MAP,
-                conf_a=min(final_conf, 99), pres_a=final_percentage,
-                conf_b=dominant_conf,       pres_b=dominant_percentage
+                conf_a=raw_final_conf, pres_a=final_percentage,
+                conf_b=raw_dominant_conf, pres_b=dominant_percentage
             )
 
         # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
@@ -523,7 +542,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
         res_obj = {
             "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
-            "conf": min(final_conf, 99),
+            "conf": min(int(raw_final_conf), 100),  # Plafond uniquement pour l'esthétique
             "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
             "chroma": chroma_avg, "modulation": mod_detected,
             "target_key": target_key, "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
