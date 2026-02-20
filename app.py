@@ -287,6 +287,16 @@ def solve_key_sniper(chroma_vector, bass_vector):
                 profile_scores.append(score)
 
             avg_score = np.mean(profile_scores)
+
+            # ── MALUS TONIQUE ABSENTE ──────────────────────────────────────────
+            # Si la note fondamentale (tonique) est quasi-absente du spectre chroma,
+            # la corrélation de Pearson peut rester artificiellement élevée car elle
+            # mesure la "forme" du profil, pas la présence physique des notes.
+            # On pénalise donc fortement toute clé dont la tonique est sous le seuil.
+            if cv[i] < 0.1:
+                avg_score *= 0.5  # Divise le score par deux si la tonique n'existe pas physiquement
+            # ─────────────────────────────────────────────────────────────────────
+
             if avg_score > best_overall_score:
                 best_overall_score = avg_score
                 best_key = f"{NOTES_LIST[i]} {mode}"
@@ -422,6 +432,25 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # Étape A : Calcul de la présence de la clé retenue par l'algorithme (Consonance)
         final_vote_count = votes.get(final_key, 0)
         final_percentage = (final_vote_count / total_votes * 100) if total_votes > 0 else 0
+        # ══════════════════════════════════════════════════════════════════════════
+        # --- SCORE DE RÉALITÉ : Confiance Effective (Pondération par la Présence) ---
+        # ══════════════════════════════════════════════════════════════════════════
+        # Problème : une clé absente du morceau (0% présence) peut tout de même
+        # obtenir une confiance élevée via la corrélation de Pearson car celle-ci
+        # mesure la "forme" du profil harmonique, pas la réalité physique des notes.
+        # Solution : on pondère la confiance par la présence réelle dans le morceau.
+        # Si présence = 0 % → confiance effective = 0, peu importe le score brut.
+        final_effective_conf   = final_conf   * (final_percentage   / 100)
+        dom_effective_conf     = dominant_conf * (dominant_percentage / 100)
+
+        # Règle de décision basée sur la réalité statistique :
+        # On préfère la clé qui a la meilleure combinaison confiance × présence.
+        if dom_effective_conf > final_effective_conf:
+            final_key        = dominant_key
+            final_conf       = dominant_conf
+            final_percentage = dominant_percentage
+        # ══════════════════════════════════════════════════════════════════════════
+
         dominant_camelot = CAMELOT_MAP.get(dominant_key, "??")
 
         mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
