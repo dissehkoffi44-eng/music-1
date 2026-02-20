@@ -567,7 +567,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         else:
             # On compare les forces brutes (Confiance × √Présence)
             # Si la Dominante est 15% plus puissante, elle détrône la Consonance
-            if dom_power > (final_power * 1.1):
+            if dom_power > (final_power * 1):
                 confiance_pure_key = dominant_key
                 avis_expert = f"✅ STABILITÉ DOMINANTE ({round(dominant_percentage, 1)}%)"
                 color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
