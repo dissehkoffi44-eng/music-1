@@ -470,7 +470,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V12.0 (ARBITRAGE UNIVERSEL + POWER-FIRST) ---
+        # --- MOTEUR DE DÉCISION SNIPER V12.0 (MODIFIÉ) ---
         # ══════════════════════════════════════════════════════════════════════════
 
         # --- CALCULS DE FORCE ET TEMPS DYNAMIQUE ---
@@ -516,10 +516,17 @@ def process_audio(audio_file, file_name, progress_placeholder):
             if decision_pivot == final_key:
                 decision_pivot = None
 
+        # 🎯 PRIORITÉ @ : VERROUILLAGE STATISTIQUE (Consonance == Dominante)
+        # Si les deux moteurs sont d'accord avec une confiance et présence décente
+        if final_key == dominant_key and final_conf >= 70 and final_percentage >= 30:
+            confiance_pure_key = final_key
+            avis_expert = "💎 VERROUILLAGE STATISTIQUE"
+            color_bandeau = "linear-gradient(135deg, #10b981, #059669)"  # Vert Émeraude
+
         # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
         # Déclenché si la dominante écrase la consonance (ratio > 1.25)
         # OU si ce sont des voisins et que la dominante est plus solide (ratio > 1.10)
-        if power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
+        elif power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
             confiance_pure_key = dominant_key
             avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
