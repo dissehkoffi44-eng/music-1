@@ -518,9 +518,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
             final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v11)
+        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v12)
         decision_pivot = None
-        if final_conf >= 75 and dominant_conf >= 75:
+        if (final_conf >= 70 and dominant_conf >= 65) or dom_power > 400:
             decision_pivot = arbitrage_expert_universel(
                 chroma_avg, final_key, dominant_key, CAMELOT_MAP
             )
@@ -567,7 +567,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         else:
             # On compare les forces brutes (Confiance × √Présence)
             # Si la Dominante est 15% plus puissante, elle détrône la Consonance
-            if dom_power > (final_power * 1):
+            if dom_power > (final_power * 1.15):
                 confiance_pure_key = dominant_key
                 avis_expert = f"✅ STABILITÉ DOMINANTE ({round(dominant_percentage, 1)}%)"
                 color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
