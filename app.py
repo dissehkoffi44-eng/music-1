@@ -526,7 +526,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         decision_pivot = None
         arb_dist_num   = 99
         arb_dist_mode  = 99
-        if final_conf >= 75 and dominant_conf >= 75:
+        if final_conf >= 75 and dominant_conf >= 69:
             arb_result    = arbitrage_expert_universel(
                 chroma_avg, final_key, dominant_key, CAMELOT_MAP
             )
