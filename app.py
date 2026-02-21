@@ -96,27 +96,27 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
+def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
     """
-    Arbitrage Expert Universel v12.1 — Juge de Paix Spectral (Quinte + Tierce).
+    Arbitrage Expert Universel v13.0 — "The Bass & Dissonance Guard"
 
-    Étend la couverture de l'arbitrage à toutes les paires de clés voisines
-    sur le Camelot Wheel, incluant :
-      - Voisins directs  (dist_num=1, même mode)
-      - Relatifs         (dist_num=0, modes croisés A↔B)
-      - Diagonaux        (dist_num=1, modes croisés)
+    Améliorations vs v12.1 :
+      - Intègre le vecteur basse (bass_vec) dans le calcul de force harmonique
+        (pondération : Quinte 50% + Tierce 30% + Basse 20%).
+      - Filtre de note interdite (Anti-Confusion Quinte) :
+        détecte les dissonances caractéristiques pour lever les ambiguïtés
+        entre tonalités voisines (ex. D minor vs C major via le Si).
+      - Seuil de victoire relevé à 15% (plus sélectif que v12.1 à 10%).
 
-    Algorithme :
-      1. Distance numérique circulaire (0-6) + distance de mode (0 ou 1).
-      2. Si dist_num <= 1 ET dist_mode <= 1 : duel spectral Quinte/Tierce pondéré.
-         - Force harmonique = (quinte × 0.6) + (tierce × 0.4)
-         - La dominante gagne si sa force dépasse la consonante de 10 %.
-         - Sinon, la consonance est conservée (biais de stabilité).
-      3. Si hors zone de duel : consonance par défaut, duel_actif=False.
+    Couvre toujours les trois familles de voisinage Camelot :
+      - Voisins directs   (dist_num=1, même mode)
+      - Voisins relatifs  (dist_num=0, modes croisés A↔B)
+      - Voisins diagonaux (dist_num=1, modes croisés)
 
     Paramètres
     ----------
     chroma   : np.ndarray — vecteur chroma global (12 valeurs normalisées).
+    bass_vec : np.ndarray — vecteur chroma des basses (12 valeurs normalisées).
     key_cons : str — clé Consonance (ex. "A minor").
     key_dom  : str — clé Dominante (ex. "E minor").
     cam_map  : dict — mapping clé → Camelot (ex. CAMELOT_MAP).
@@ -125,7 +125,7 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
     --------
     dict avec :
       - 'key'        : str  — la clé gagnante.
-      - 'duel_actif' : bool — True si un duel spectral a eu lieu (zone de voisinage).
+      - 'duel_actif' : bool — True si un duel de voisinage a eu lieu.
       - 'dist_num'   : int  — distance numérique Camelot (0-6).
       - 'dist_mode'  : int  — distance de mode (0=même, 1=croisé).
     """
@@ -154,17 +154,27 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
         idx_c = NOTES_LIST.index(key_cons.split()[0])
         idx_d = NOTES_LIST.index(key_dom.split()[0])
 
-        def get_harmonic_strength(idx, mode, chroma_vec):
-            """Force harmonique pondérée : Quinte (60%) + Tierce (40%)."""
+        def get_advanced_strength(idx, mode, chroma_vec, b_vec):
+            """Force harmonique avancée : Quinte (50%) + Tierce (30%) + Basse (20%)."""
             quinte = chroma_vec[(idx + 7) % 12]
             tierce = chroma_vec[(idx + 3) % 12] if mode == 'minor' else chroma_vec[(idx + 4) % 12]
-            return (quinte * 0.6) + (tierce * 0.4)
+            basse  = b_vec[idx]
+            return (quinte * 0.5) + (tierce * 0.3) + (basse * 0.2)
 
-        force_c = get_harmonic_strength(idx_c, key_cons.split()[1], chroma)
-        force_d = get_harmonic_strength(idx_d, key_dom.split()[1], chroma)
+        force_c = get_advanced_strength(idx_c, key_cons.split()[1], chroma, bass_vec)
+        force_d = get_advanced_strength(idx_d, key_dom.split()[1], chroma, bass_vec)
 
-        # La dominante gagne si elle est spectralement plus claire d'au moins 10 %
-        winner = key_dom if force_d > force_c * 1.10 else key_cons
+        # --- FILTRE DE NOTE INTERDITE (Anti-Confusion Quinte) ---
+        # Cas D minor (7A) vs C major (8B) :
+        # Le Si (B) est une 6te de tension pour D minor mais fondamentale de G major (voisin de C).
+        # Si le Si est trop présent (> 15% du spectre), D minor est probablement faux.
+        if key_cons == "D minor" and key_dom == "C major":
+            si_idx = NOTES_LIST.index("B")
+            if chroma[si_idx] > 0.15:
+                force_d *= 1.25  # Boost C major (ou G major caché)
+
+        # La dominante gagne si elle est spectralement plus forte de 15% (seuil relevé vs v12)
+        winner = key_dom if force_d > force_c * 1.15 else key_cons
         return {"key": winner, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode}
 
     # Par défaut : hors zone de voisinage → pas de duel
@@ -522,13 +532,17 @@ def process_audio(audio_file, file_name, progress_placeholder):
             final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v12.1)
+        # Pré-calcul de l'arbitrage universel (Bass & Dissonance Guard — v13.0)
         decision_pivot = None
         arb_dist_num   = 99
         arb_dist_mode  = 99
-        if final_conf >= 75 and dominant_conf >= 69:
-            arb_result    = arbitrage_expert_universel(
-                chroma_avg, final_key, dominant_key, CAMELOT_MAP
+        if final_conf >= 70 and dominant_conf >= 70:  # Seuil abaissé à 70 → plus de duels activés
+            arb_result = arbitrage_expert_universel(
+                chroma_avg,
+                bass_global,   # Vecteur basse pour pondération harmonique avancée
+                final_key,
+                dominant_key,
+                CAMELOT_MAP
             )
             # Le pivot est actif si et seulement si un duel de voisinage a eu lieu
             if arb_result["duel_actif"]:
