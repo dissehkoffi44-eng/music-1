@@ -370,7 +370,19 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 y = librosa.resample(y, orig_sr=sr, target_sr=22050)
                 sr = 22050
         else:
-            y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
+            try:
+                y, sr = librosa.load(io.BytesIO(file_bytes), sr=22050, mono=True)
+            except Exception:
+                # Fallback via pydub pour MP3, OGG, WEBM, AAC, etc.
+                audio = AudioSegment.from_file(io.BytesIO(file_bytes))
+                samples = np.array(audio.get_array_of_samples()).astype(np.float32)
+                if audio.channels == 2:
+                    samples = samples.reshape((-1, 2)).mean(axis=1)
+                y = samples / (2**15)
+                sr = audio.frame_rate
+                if sr != 22050:
+                    y = librosa.resample(y, orig_sr=sr, target_sr=22050)
+                    sr = 22050
 
         update_prog(20, "Détection des sections harmoniques")
         duration = librosa.get_duration(y=y, sr=sr)
