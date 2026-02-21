@@ -483,7 +483,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION SNIPER V12.0 (MODIFIÉ) ---
+        # --- MOTEUR DE DÉCISION SNIPER V12.1 — JUGE DE PAIX HARMONIQUE ---
         # ══════════════════════════════════════════════════════════════════════════
 
         # --- CALCULS DE FORCE ET TEMPS DYNAMIQUE ---
@@ -544,20 +544,28 @@ def process_audio(audio_file, file_name, progress_placeholder):
             avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
 
-        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Spectral — Power Score non décisif)
+        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE — JUGE DE PAIX (Duel serré : ratio 0.85–1.15)
+        # Si l'arbitrage spectral a désigné un vainqueur ET que les forces sont quasi-équivalentes,
+        # l'Arbitrage Harmonique devient le juge de paix définitif.
+        elif decision_pivot and (0.85 < power_ratio < 1.15):
+            confiance_pure_key = decision_pivot
+            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (DUEL SERRÉ)"
+            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan Profond
+
+        # ⚖️ PRIORITÉ 2 : ARBITRAGE HARMONIQUE (Spectral — Power Score non décisif)
         elif decision_pivot:
             confiance_pure_key = decision_pivot
             avis_expert = "⚖️ ARBITRAGE HARMONIQUE"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
-        # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
+        # 🏁 PRIORITÉ 3 : MODULATION DYNAMIQUE (Proportionnelle)
         elif (mod_detected and ends_in_target and target_percentage >= 25.0
               and modulation_time is not None and modulation_time <= dynamic_threshold):
             confiance_pure_key = target_key
             avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"  # Violet
 
-        # 💎 PRIORITÉ 3 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
+        # 💎 PRIORITÉ 4 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
         elif final_key == dominant_key and final_conf >= 85:
             confiance_pure_key = final_key
             avis_expert = "💎 ACCORD PARFAIT"
@@ -766,7 +774,7 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v5.0 | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v5.1 | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
                             {analysis_data['pure_camelot']}
