@@ -98,7 +98,7 @@ st.markdown("""
 
 def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
     """
-    Arbitrage Expert Universel v12 — Juge de Paix Spectral (Quinte + Tierce).
+    Arbitrage Expert Universel v12.1 — Juge de Paix Spectral (Quinte + Tierce).
 
     Étend la couverture de l'arbitrage à toutes les paires de clés voisines
     sur le Camelot Wheel, incluant :
@@ -112,7 +112,7 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
          - Force harmonique = (quinte × 0.6) + (tierce × 0.4)
          - La dominante gagne si sa force dépasse la consonante de 10 %.
          - Sinon, la consonance est conservée (biais de stabilité).
-      3. Si hors zone de duel : consonance par défaut.
+      3. Si hors zone de duel : consonance par défaut, duel_actif=False.
 
     Paramètres
     ----------
@@ -123,14 +123,18 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
 
     Retourne
     --------
-    str — la clé gagnante, ou key_cons si aucun arbitrage n'est possible.
+    dict avec :
+      - 'key'        : str  — la clé gagnante.
+      - 'duel_actif' : bool — True si un duel spectral a eu lieu (zone de voisinage).
+      - 'dist_num'   : int  — distance numérique Camelot (0-6).
+      - 'dist_mode'  : int  — distance de mode (0=même, 1=croisé).
     """
     cam_c = cam_map.get(key_cons)
     cam_d = cam_map.get(key_dom)
 
     # Garde-fou : clés inconnues du référentiel Camelot → pas d'arbitrage
     if not cam_c or not cam_d:
-        return key_cons
+        return {"key": key_cons, "duel_actif": False, "dist_num": 99, "dist_mode": 99}
 
     # Extraction des coordonnées Camelot
     val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
@@ -160,11 +164,11 @@ def arbitrage_expert_universel(chroma, key_cons, key_dom, cam_map):
         force_d = get_harmonic_strength(idx_d, key_dom.split()[1], chroma)
 
         # La dominante gagne si elle est spectralement plus claire d'au moins 10 %
-        if force_d > force_c * 1.10:
-            return key_dom
+        winner = key_dom if force_d > force_c * 1.10 else key_cons
+        return {"key": winner, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode}
 
-    # Par défaut : la Consonance reste la clé retenue
-    return key_cons
+    # Par défaut : hors zone de voisinage → pas de duel
+    return {"key": key_cons, "duel_actif": False, "dist_num": dist_num, "dist_mode": dist_mode}
 
 def seconds_to_mmss(seconds):
     if seconds is None:
@@ -518,16 +522,19 @@ def process_audio(audio_file, file_name, progress_placeholder):
             final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
             power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v11)
+        # Pré-calcul de l'arbitrage universel (Test Spectral sur quintes — v12.1)
         decision_pivot = None
+        arb_dist_num   = 99
+        arb_dist_mode  = 99
         if final_conf >= 75 and dominant_conf >= 75:
-            decision_pivot = arbitrage_expert_universel(
+            arb_result    = arbitrage_expert_universel(
                 chroma_avg, final_key, dominant_key, CAMELOT_MAP
             )
-            # Si l'arbitrage renvoie la consonance elle-même, on neutralise
-            # (pas de déclenchement de la branche ARBITRAGE HARMONIQUE)
-            if decision_pivot == final_key:
-                decision_pivot = None
+            # Le pivot est actif si et seulement si un duel de voisinage a eu lieu
+            if arb_result["duel_actif"]:
+                decision_pivot = arb_result["key"]
+                arb_dist_num   = arb_result["dist_num"]
+                arb_dist_mode  = arb_result["dist_mode"]
 
         # 🎯 PRIORITÉ @ : VERROUILLAGE STATISTIQUE (Consonance == Dominante)
         # Si les deux moteurs sont d'accord avec une confiance et présence décente
@@ -544,28 +551,28 @@ def process_audio(audio_file, file_name, progress_placeholder):
             avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
 
-        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE — JUGE DE PAIX (Duel serré : ratio 0.85–1.15)
-        # Si l'arbitrage spectral a désigné un vainqueur ET que les forces sont quasi-équivalentes,
-        # l'Arbitrage Harmonique devient le juge de paix définitif.
-        elif decision_pivot and (0.85 < power_ratio < 1.15):
+        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Duel de voisinage — affichage systématique)
+        # Déclenché dès qu'un duel spectral a eu lieu sur le Camelot Wheel.
+        # Le type de voisinage détermine le libellé affiché dans le bandeau.
+        elif decision_pivot is not None:
             confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE HARMONIQUE (DUEL SERRÉ)"
-            color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan Profond
-
-        # ⚖️ PRIORITÉ 2 : ARBITRAGE HARMONIQUE (Spectral — Power Score non décisif)
-        elif decision_pivot:
-            confiance_pure_key = decision_pivot
-            avis_expert = "⚖️ ARBITRAGE HARMONIQUE"
+            if arb_dist_num == 0 and arb_dist_mode == 1:
+                type_duel = "VOISIN RELATIF"
+            elif arb_dist_num == 1 and arb_dist_mode == 1:
+                type_duel = "VOISIN DIAGONAL"
+            else:
+                type_duel = "VOISIN PROCHE"
+            avis_expert   = f"⚖️ ARBITRAGE : {type_duel}"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
-        # 🏁 PRIORITÉ 3 : MODULATION DYNAMIQUE (Proportionnelle)
+        # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
         elif (mod_detected and ends_in_target and target_percentage >= 25.0
               and modulation_time is not None and modulation_time <= dynamic_threshold):
             confiance_pure_key = target_key
             avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
             color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"  # Violet
 
-        # 💎 PRIORITÉ 4 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
+        # 💎 PRIORITÉ 3 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
         elif final_key == dominant_key and final_conf >= 85:
             confiance_pure_key = final_key
             avis_expert = "💎 ACCORD PARFAIT"
