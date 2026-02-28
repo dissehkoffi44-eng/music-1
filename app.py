@@ -8,7 +8,7 @@ from collections import Counter
 import io
 import requests
 import gc
-import json  # <--- AJOUTEZ CETTE LIGNE ICI
+import json
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
@@ -88,7 +88,6 @@ def get_bass_priority(y, sr, tuning=0.0):
     nyq = 0.5 * sr
     b, a = butter(2, 150/nyq, btype='low')
     y_bass = lfilter(b, a, y)
-    # FIX 2 : bins_per_octave=24 et tuning cohérent avec le reste de l'analyse
     chroma_bass = librosa.feature.chroma_cqt(
         y=y_bass, sr=sr, n_chroma=12, bins_per_octave=24, tuning=tuning
     )
@@ -106,7 +105,6 @@ def solve_key_sniper(chroma_vector, bass_vector):
             for i in range(12):
                 score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
                 
-                # --- LOGIQUE DE CADENCE PARFAITE ---
                 if mode == "minor":
                     dom_idx = (i + 7) % 12 
                     leading_tone = (i + 11) % 12
@@ -135,11 +133,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
         status_text.markdown(f"**{text} | {value}%**")
 
     update_prog(10, f"Chargement de {file_name}")
-    y, sr = librosa.load(audio_file, sr=22050, mono=True)
+    # FIX : envelopper dans BytesIO pour compatibilité soundfile/librosa
+    audio_bytes = io.BytesIO(audio_file.read())
+    y, sr = librosa.load(audio_bytes, sr=22050, mono=True)
     
     update_prog(30, "Filtrage des fréquences")
     duration = librosa.get_duration(y=y, sr=sr)
-    # FIX 1a : bins_per_octave=24 pour une estimation du tuning cohérente avec chroma_cqt 24 bpo
     tuning = librosa.estimate_tuning(y=y, sr=sr, bins_per_octave=24)
     y_filt = apply_sniper_filters(y, sr)
 
@@ -154,7 +153,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
         
         c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=24, bins_per_octave=24)
         c_avg = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
-        # FIX 2 : on passe tuning à get_bass_priority
         b_seg = get_bass_priority(y[idx_start:idx_end], sr, tuning=tuning)
         
         res = solve_key_sniper(c_avg, b_seg)
@@ -183,7 +181,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
         "conf": min(final_conf, 99), "tempo": int(float(np.squeeze(tempo))),
-        # FIX 1b : /24 au lieu de /12 car tuning est maintenant en bins_per_octave=24
         "tuning": round(440 * (2 ** (tuning / 24)), 1),
         "timeline": timeline,
         "chroma": chroma_avg, "modulation": mod_detected,
@@ -191,11 +188,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
         "name": file_name
     }
     
-    # --- RAPPORT TELEGRAM ENRICHI ---
-    # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            # 1. Préparation du texte — bloc modulation conditionnel
             mod_block = ""
             if res_obj['modulation'] and res_obj['target_key']:
                 mod_block = (
@@ -218,18 +212,15 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅"
             )
 
-            # 2. Génération du Graphique RADAR (Spectre)
             fig_radar = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
             fig_radar.update_layout(template="plotly_dark", title="SPECTRE HARMONIQUE", polar=dict(radialaxis=dict(visible=False)))
             radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
 
-            # 3. Génération du Graphique TIMELINE
             df_tl = pd.DataFrame(res_obj['timeline'])
             fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark", 
                              category_orders={"Note": NOTES_ORDER}, title="ÉVOLUTION TEMPORELLE")
             timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
 
-            # 4. Envoi via sendMediaGroup (Album photo)
             media_group = [
                 {'type': 'photo', 'media': 'attach://radar.png', 'caption': caption, 'parse_mode': 'Markdown'},
                 {'type': 'photo', 'media': 'attach://timeline.png'}
