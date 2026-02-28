@@ -12,6 +12,7 @@ import json
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
+import time
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -73,6 +74,42 @@ st.markdown("""
     .sniper-badge {
         background: #238636; color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.7em;
     }
+
+    /* ── INDICATEURS DE STATUT ── */
+    .status-box {
+        display: flex; align-items: center; gap: 14px;
+        padding: 16px 24px; border-radius: 14px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: bold; font-size: 0.95em;
+        margin: 16px 0; letter-spacing: 0.5px;
+    }
+    .status-loading {
+        background: rgba(251, 191, 36, 0.10);
+        border: 1px solid #fbbf24;
+        color: #fde68a;
+    }
+    .status-processing {
+        background: rgba(99, 102, 241, 0.10);
+        border: 1px solid #6366f1;
+        color: #a5b4fc;
+    }
+    .status-success {
+        background: rgba(16, 185, 129, 0.10);
+        border: 1px solid #10b981;
+        color: #6ee7b7;
+    }
+    .status-icon { font-size: 1.4em; }
+
+    @keyframes spin {
+        0%   { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.35; }
+    }
+    .icon-spin  { display:inline-block; animation: spin  1.1s linear infinite; }
+    .icon-pulse { display:inline-block; animation: pulse 1.3s ease-in-out infinite; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -262,53 +299,170 @@ def get_chord_js(btn_id, key_str):
     }};
     """
 
+# ─────────────────────────────────────────
 # --- DASHBOARD PRINCIPAL ---
+# ─────────────────────────────────────────
 st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique 99% précis")
 
-uploaded_files = st.file_uploader("📥 Déposez vos fichiers (Audio)", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "📥 Déposez vos fichiers (Audio)",
+    type=['mp3', 'wav', 'flac', 'm4a'],
+    accept_multiple_files=True
+)
 
 if uploaded_files:
+
+    total = len(uploaded_files)
+    plural = total > 1
+
+    # ── Zone unique pour l'indicateur global (se met à jour en place) ──
+    global_status = st.empty()
+
+    # ════════════════════════════════════
+    # ÉTAPE 1 — CHARGEMENT
+    # ════════════════════════════════════
+    global_status.markdown(f"""
+        <div class="status-box status-loading">
+            <span class="status-icon icon-pulse">⏳</span>
+            <span>
+                FICHIER{'S' if plural else ''} EN COURS DE CHARGEMENT
+                &nbsp;—&nbsp;
+                {total} fichier{'s' if plural else ''} reçu{'s' if plural else ''}…
+            </span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    time.sleep(0.7)   # délai visuel pour que l'indicateur soit perceptible
+
+    # ════════════════════════════════════
+    # ÉTAPE 2 — TRAITEMENT
+    # ════════════════════════════════════
+    global_status.markdown(f"""
+        <div class="status-box status-processing">
+            <span class="status-icon icon-spin">⚙️</span>
+            <span>
+                FICHIER{'S' if plural else ''} EN COURS DE TRAITEMENT
+                &nbsp;—&nbsp;
+                Sniper Engine v5.0 en action…
+            </span>
+        </div>
+    """, unsafe_allow_html=True)
+
     progress_zone = st.container()
-    
+    results = []
+
     for f in reversed(uploaded_files):
         analysis_data = process_audio(f, f.name, progress_zone)
-        
+        results.append(analysis_data)
+
+    # ════════════════════════════════════
+    # ÉTAPE 3 — SUCCÈS
+    # ════════════════════════════════════
+    global_status.markdown(f"""
+        <div class="status-box status-success">
+            <span class="status-icon">✅</span>
+            <span>
+                FICHIER{'S' if plural else ''} TRAITÉ{'S' if plural else ''} AVEC SUCCÈS
+                &nbsp;—&nbsp;
+                {total} analyse{'s' if plural else ''} complète{'s' if plural else ''} !
+            </span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────
+    # --- AFFICHAGE DES RÉSULTATS ---
+    # ─────────────────────────────────────────
+    for analysis_data in results:
         with st.container():
-            st.markdown(f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>", unsafe_allow_html=True)
-            color = "linear-gradient(135deg, #065f46, #064e3b)" if analysis_data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
-            
+            st.markdown(
+                f"<div class='file-header'>📂 ANALYSE : {analysis_data['name']}</div>",
+                unsafe_allow_html=True
+            )
+            color = (
+                "linear-gradient(135deg, #065f46, #064e3b)"
+                if analysis_data['conf'] > 85
+                else "linear-gradient(135deg, #1e293b, #0f172a)"
+            )
+
             st.markdown(f"""
                 <div class="report-card" style="background:{color};">
-                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">SNIPER ENGINE v5.0 <span class="sniper-badge">READY</span></p>
-                    <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">{analysis_data['key'].upper()}</h1>
-                    <p style="font-size:1.5em; opacity:0.9;">CAMELOT: <b>{analysis_data['camelot']}</b> &nbsp; | &nbsp; CONFIANCE: <b>{analysis_data['conf']}%</b></p>
+                    <p style="letter-spacing:5px; opacity:0.8; font-size:0.8em;">
+                        SNIPER ENGINE v5.0 <span class="sniper-badge">READY</span>
+                    </p>
+                    <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">
+                        {analysis_data['key'].upper()}
+                    </h1>
+                    <p style="font-size:1.5em; opacity:0.9;">
+                        CAMELOT: <b>{analysis_data['camelot']}</b>
+                        &nbsp;|&nbsp;
+                        CONFIANCE: <b>{analysis_data['conf']}%</b>
+                    </p>
                     {f"<div class='modulation-alert'>⚠️ MODULATION : {analysis_data['target_key'].upper()} ({analysis_data['target_camelot']})</div>" if analysis_data['modulation'] else ""}
                 </div>
             """, unsafe_allow_html=True)
-            
+
             m1, m2, m3 = st.columns(3)
-            with m1: st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em; color:#10b981;'>{analysis_data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-            with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
+            with m1:
+                st.markdown(
+                    f"<div class='metric-box'><b>TEMPO</b><br>"
+                    f"<span style='font-size:2em; color:#10b981;'>{analysis_data['tempo']}</span><br>BPM</div>",
+                    unsafe_allow_html=True
+                )
+            with m2:
+                st.markdown(
+                    f"<div class='metric-box'><b>ACCORDAGE</b><br>"
+                    f"<span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>",
+                    unsafe_allow_html=True
+                )
             with m3:
                 btn_id = f"play_{hash(analysis_data['name'])}"
                 components.html(f"""
-                    <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
+                    <button id="{btn_id}" style="width:100%; height:95px;
+                        background:linear-gradient(45deg, #4F46E5, #7C3AED);
+                        color:white; border:none; border-radius:15px;
+                        cursor:pointer; font-weight:bold;">
+                        🎹 TESTER L'ACCORD
+                    </button>
                     <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                 """, height=110)
 
             c1, c2 = st.columns([2, 1])
             with c1:
-                fig_tl = px.line(pd.DataFrame(analysis_data['timeline']), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-                fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fig_tl = px.line(
+                    pd.DataFrame(analysis_data['timeline']),
+                    x="Temps", y="Note", markers=True,
+                    template="plotly_dark",
+                    category_orders={"Note": NOTES_ORDER}
+                )
+                fig_tl.update_layout(
+                    height=300,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)'
+                )
                 st.plotly_chart(fig_tl, use_container_width=True)
             with c2:
-                fig_radar = go.Figure(data=go.Scatterpolar(r=analysis_data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
-                fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
+                fig_radar = go.Figure(data=go.Scatterpolar(
+                    r=analysis_data['chroma'], theta=NOTES_LIST,
+                    fill='toself', line_color='#10b981'
+                ))
+                fig_radar.update_layout(
+                    template="plotly_dark", height=300,
+                    margin=dict(l=40, r=40, t=30, b=20),
+                    polar=dict(radialaxis=dict(visible=False)),
+                    paper_bgcolor='rgba(0,0,0,0)'
+                )
                 st.plotly_chart(fig_radar, use_container_width=True)
-            
-            st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
 
+            st.markdown(
+                "<hr style='border-color: #30363d; margin-bottom:40px;'>",
+                unsafe_allow_html=True
+            )
+
+# ─────────────────────────────────────────
+# --- SIDEBAR ---
+# ─────────────────────────────────────────
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
     st.header("Sniper Control")
