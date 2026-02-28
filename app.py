@@ -182,7 +182,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
     res_obj = {
         "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
-        "conf": min(final_conf, 99), "tempo": int(float(tempo)),
+        "conf": min(final_conf, 99), "tempo": int(float(np.squeeze(tempo))),
         # FIX 1b : /24 au lieu de /12 car tuning est maintenant en bins_per_octave=24
         "tuning": round(440 * (2 ** (tuning / 24)), 1),
         "timeline": timeline,
