@@ -195,7 +195,16 @@ def process_audio(audio_file, file_name, progress_placeholder):
     # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            # 1. Préparation du texte
+            # 1. Préparation du texte — bloc modulation conditionnel
+            mod_block = ""
+            if res_obj['modulation'] and res_obj['target_key']:
+                mod_block = (
+                    f"\n━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ *MODULATION DÉTECTÉE*\n"
+                    f"🔀 *VERS:* `{res_obj['target_key'].upper()}`\n"
+                    f"🌀 *CAMELOT CIBLE:* `{res_obj['target_camelot']}`"
+                )
+
             caption = (
                 f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -203,7 +212,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 f"🎹 *TONALITÉ:* `{final_key.upper()}`\n"
                 f"🌀 *CAMELOT:* `{res_obj['camelot']}`\n"
                 f"🔥 *CONFIANCE:* `{res_obj['conf']}%`"
-                f"{mod_text if 'mod_text' in locals() else ''}\n"
+                f"{mod_block}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"⏱ *TEMPO:* `{res_obj['tempo']} BPM`\n"
                 f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅"
